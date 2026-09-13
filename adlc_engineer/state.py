@@ -10,3 +10,12 @@ class ADLCState(TypedDict):
     architecture_model: dict
     modernization: dict
     report_markdown: str
+
+    # --- Architecture Challenger (opt-in) ---
+    run_challenger: bool
+    security_review: dict
+    scalability_review: dict
+    cost_review: dict
+    reliability_review: dict
+    implementation_review: dict
+    challenger_summary: dict

@@ -4,7 +4,16 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from adlc_engineer.graph import _NOT_FOUND, _resolve_dot_path, _sanitize_mermaid, check_citations
+from adlc_engineer.graph import (
+    _NOT_FOUND,
+    REVIEWER_NODE_NAMES,
+    _resolve_dot_path,
+    _sanitize_mermaid,
+    aggregate_reviews,
+    check_citations,
+    route_after_challenger_review,
+    route_after_modernization,
+)
 
 
 class TestSanitizeMermaid(unittest.TestCase):
@@ -64,6 +73,38 @@ class TestCheckCitations(unittest.TestCase):
     def test_no_citations_is_a_warning(self):
         warnings = check_citations([], self.EVIDENCE, "/tmp/repo")
         self.assertEqual(len(warnings), 1)
+
+
+class TestRouteAfterModernization(unittest.TestCase):
+    def test_fans_out_to_all_five_reviewers_when_opted_in(self):
+        self.assertEqual(sorted(route_after_modernization({"run_challenger": True})), sorted(REVIEWER_NODE_NAMES))
+
+    def test_skips_straight_to_assemble_report_by_default(self):
+        self.assertEqual(route_after_modernization({"run_challenger": False}), ["assemble_report"])
+
+    def test_skips_straight_to_assemble_report_when_key_missing(self):
+        self.assertEqual(route_after_modernization({}), ["assemble_report"])
+
+
+class TestAggregateReviews(unittest.TestCase):
+    def test_true_when_any_reviewer_objects(self):
+        self.assertTrue(aggregate_reviews({"Security": {"has_objection": False}, "Cost": {"has_objection": True}}))
+
+    def test_false_when_no_reviewer_objects(self):
+        self.assertFalse(aggregate_reviews({"Security": {"has_objection": False}}))
+
+    def test_false_for_empty_reviews(self):
+        self.assertFalse(aggregate_reviews({}))
+
+
+class TestRouteAfterChallengerReview(unittest.TestCase):
+    def test_revises_when_objections_present(self):
+        state = {"challenger_summary": {"has_objections": True}}
+        self.assertEqual(route_after_challenger_review(state), "revise_modernization")
+
+    def test_assembles_report_when_no_objections(self):
+        state = {"challenger_summary": {"has_objections": False}}
+        self.assertEqual(route_after_challenger_review(state), "assemble_report")
 
 
 if __name__ == "__main__":

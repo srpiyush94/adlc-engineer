@@ -235,11 +235,56 @@ def _render_traceability(architecture_model, modernization):
     return "\n".join(lines) + "\n"
 
 
+_CHALLENGER_PERSONA_ORDER = ["Security", "Scalability", "Cost", "Reliability", "Implementation"]
+
+
+def _render_challenger_review(challenger: dict, modernization: dict) -> str:
+    reviews = challenger.get("reviews", {})
+    lines = ["## 16. Architecture Challenger Review\n"]
+    lines.append(
+        f"The recommended option (**{modernization.get('recommended_option', 'not determined')}**) was "
+        "reviewed by a five-persona challenge panel, each citing evidence for their finding.\n"
+    )
+    for persona in _CHALLENGER_PERSONA_ORDER:
+        finding = reviews.get(persona, {})
+        lines.append(f"### {persona}")
+        objection = "Yes" if finding.get("has_objection") else "No"
+        lines.append(f"- **Objection raised:** {objection} (severity: {finding.get('severity', 'none')})")
+        lines.append(f"- **Finding:** {finding.get('summary', '_no summary provided_')}")
+        lines.append(f"- **Citations:** {_fmt_citations(finding.get('citations', []))}")
+        if finding.get("citation_warnings"):
+            lines.append(f"- **Citation warnings:** {'; '.join(finding['citation_warnings'])}")
+        lines.append("")
+
+    if challenger.get("has_objections"):
+        objecting = ", ".join(challenger.get("objecting_personas", [])) or "unspecified"
+        lines.append(f"**Panel verdict:** Objection(s) raised by: {objecting}.\n")
+        if modernization.get("revised"):
+            lines.append(
+                "**Architect's revision:** The recommendation was revised once in response to these "
+                "objections (by design, no further re-review pass is performed).\n"
+            )
+            lines.append(modernization.get("revision_notes") or "_no revision notes provided_")
+        else:
+            lines.append("_The recommendation was not revised (revision step did not run)._")
+    else:
+        lines.append(
+            "**Panel verdict:** No reviewer raised an objection; the original recommendation stands unchanged."
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _render_appendix(evidence):
     return "## Appendix A: Evidence Data\n\n```json\n" + json.dumps(evidence, indent=2) + "\n```\n"
 
 
-def render_report(evidence: dict, architecture_model: dict, modernization: dict, repo_display_name: str) -> str:
+def render_report(
+    evidence: dict,
+    architecture_model: dict,
+    modernization: dict,
+    repo_display_name: str,
+    challenger: dict = None,
+) -> str:
     sections = [
         f"# ADLC Engineer — Architecture & Modernization Report\n\n**Repository:** {repo_display_name}\n",
         _render_executive_summary(evidence, modernization),
@@ -257,6 +302,8 @@ def render_report(evidence: dict, architecture_model: dict, modernization: dict,
         _render_assumptions(modernization, architecture_model),
         _render_validation_plan(evidence),
         _render_traceability(architecture_model, modernization),
-        _render_appendix(evidence),
     ]
+    if challenger is not None:
+        sections.append(_render_challenger_review(challenger, modernization))
+    sections.append(_render_appendix(evidence))
     return "\n".join(sections)

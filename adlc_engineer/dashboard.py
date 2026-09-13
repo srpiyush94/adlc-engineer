@@ -76,6 +76,11 @@ def _run_analysis_tab():
         value=str(Path(__file__).resolve().parent.parent),
         help="Either a local filesystem path or a GitHub URL (shallow-cloned read-only).",
     )
+    run_challenge = st.checkbox(
+        "Run Architecture Challenger (5 reviewer critiques + possible revision — up to 6 extra LLM calls)",
+        value=False,
+        help="Off by default to avoid burning through the Gemini free-tier daily quota.",
+    )
     run_clicked = st.button("Run Analysis", type="primary")
 
     if not run_clicked:
@@ -86,13 +91,18 @@ def _run_analysis_tab():
     if handler is None:
         st.info("Langfuse credentials not found in .env — running without tracing.")
 
-    with st.spinner("Analyzing repository — this involves two LLM calls and can take a minute or two..."):
+    spinner_text = (
+        "Analyzing repository — this involves up to eight LLM calls and can take a few minutes..."
+        if run_challenge
+        else "Analyzing repository — this involves two LLM calls and can take a minute or two..."
+    )
+    with st.spinner(spinner_text):
         try:
             with repo_source.resolve_repo(repo_arg) as (repo_path, display_name):
                 agent = build_graph()
                 config = {"callbacks": callbacks} if callbacks else {}
                 result = agent.invoke(
-                    {"repo_path": repo_path, "repo_display_name": display_name},
+                    {"repo_path": repo_path, "repo_display_name": display_name, "run_challenger": run_challenge},
                     config=config,
                 )
         except (ValueError, RuntimeError) as exc:
@@ -112,6 +122,16 @@ def _run_analysis_tab():
     st.success(f"Analysis complete. Saved to {report_path.name}")
     if warning_count:
         st.warning(f"{warning_count} unresolved citation(s) — see the Assumptions section below.")
+
+    challenger_summary = result.get("challenger_summary")
+    if run_challenge and challenger_summary:
+        if challenger_summary.get("has_objections"):
+            st.info(
+                f"Architecture Challenger: objection(s) raised by "
+                f"{', '.join(challenger_summary['objecting_personas'])}; recommendation revised once."
+            )
+        else:
+            st.info("Architecture Challenger: no objections raised; original recommendation stands.")
 
     _render_report(result["report_markdown"])
 

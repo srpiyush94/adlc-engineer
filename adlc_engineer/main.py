@@ -23,6 +23,14 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze a repository and produce a modernization report.")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="Local path or git URL of the repo to analyze.")
     parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Where to write the Markdown report.")
+    parser.add_argument(
+        "--challenge",
+        action="store_true",
+        default=False,
+        help="Run the Architecture Challenger: five specialist reviewers critique the recommended "
+             "modernization option, with one revision pass if they object. Worst case adds 6 more LLM "
+             "calls (8 total vs. 2 by default) -- opt in only when you have Gemini quota headroom.",
+    )
     args = parser.parse_args()
 
     handler = get_langfuse_handler()
@@ -36,7 +44,7 @@ def main():
         print(f"Analyzing repository: {display_name}")
         config = {"callbacks": callbacks} if callbacks else {}
         result = agent.invoke(
-            {"repo_path": repo_path, "repo_display_name": display_name},
+            {"repo_path": repo_path, "repo_display_name": display_name, "run_challenger": args.challenge},
             config=config,
         )
 
@@ -57,6 +65,16 @@ def main():
     print(f"Recommended modernization option: {modernization.get('recommended_option', 'not determined')}")
     if warning_count:
         print(f"WARNING: {warning_count} unresolved citation(s), see Assumptions section in the report.")
+
+    challenger_summary = result.get("challenger_summary")
+    if args.challenge and challenger_summary:
+        if challenger_summary.get("has_objections"):
+            print(
+                f"Architecture Challenger: objection(s) raised by "
+                f"{', '.join(challenger_summary['objecting_personas'])}; recommendation revised once."
+            )
+        else:
+            print("Architecture Challenger: no objections raised; original recommendation stands.")
 
 
 if __name__ == "__main__":

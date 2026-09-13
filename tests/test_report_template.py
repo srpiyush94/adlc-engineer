@@ -55,6 +55,24 @@ MODERNIZATION = {
     "citation_warnings": [],
 }
 
+CHALLENGER = {
+    "reviews": {
+        "Security": {"has_objection": False, "severity": "none", "summary": "No security concerns found.",
+                     "citations": ["integrations.database"]},
+        "Scalability": {"has_objection": True, "severity": "medium",
+                        "summary": "Scalability rating is asserted, not evidenced by coupling data.",
+                        "citations": ["coupling"]},
+        "Cost": {"has_objection": False, "severity": "none", "summary": "Cost rating matches repo size.",
+                 "citations": ["languages.Python"]},
+        "Reliability": {"has_objection": False, "severity": "none", "summary": "No reliability concerns.",
+                        "citations": ["tests"]},
+        "Implementation": {"has_objection": False, "severity": "none", "summary": "Roadmap looks feasible.",
+                           "citations": ["languages.Python"]},
+    },
+    "has_objections": True,
+    "objecting_personas": ["Scalability"],
+}
+
 EXPECTED_HEADERS = [
     "## 1. Executive Summary",
     "## 2. Current Architecture",
@@ -97,6 +115,30 @@ class TestReportTemplate(unittest.TestCase):
     def test_citation_round_trips_into_traceability(self):
         traceability_section = self.report[self.report.index("## 15."):]
         self.assertIn("frameworks.langgraph", traceability_section)
+
+
+class TestReportTemplateChallenger(unittest.TestCase):
+    def test_section_16_present_and_ordered_when_challenger_provided(self):
+        report = render_report(EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION, "/tmp/repo", challenger=CHALLENGER)
+        expected = EXPECTED_HEADERS[:-1] + [
+            "## 16. Architecture Challenger Review", "## Appendix A: Evidence Data",
+        ]
+        positions = [report.index(h) for h in expected]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_section_16_absent_by_default(self):
+        report = render_report(EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION, "/tmp/repo")
+        self.assertNotIn("Architecture Challenger Review", report)
+
+    def test_revision_notes_appear_when_revised(self):
+        revised = {**MODERNIZATION, "revised": True, "revision_notes": "Addressed the Scalability objection by..."}
+        report = render_report(EVIDENCE, ARCHITECTURE_MODEL, revised, "/tmp/repo", challenger=CHALLENGER)
+        self.assertIn("Addressed the Scalability objection", report)
+
+    def test_all_five_personas_appear(self):
+        report = render_report(EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION, "/tmp/repo", challenger=CHALLENGER)
+        for persona in ["Security", "Scalability", "Cost", "Reliability", "Implementation"]:
+            self.assertIn(f"### {persona}", report)
 
 
 if __name__ == "__main__":
