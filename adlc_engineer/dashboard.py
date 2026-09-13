@@ -11,6 +11,7 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
+from streamlit_mermaid import st_mermaid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv()
@@ -56,16 +57,18 @@ def _render_report(report_markdown: str):
     mermaid_code = match.group(1)
 
     st.markdown(before)
-    # Rendering this inline via st.components.v1.html + mermaid.js produces a
+    # A hand-rolled st.components.v1.html + mermaid.js embed produced a
     # degenerate near-zero-size diagram inside Streamlit's sandboxed component
-    # iframe (confirmed: the identical mermaid source renders correctly in a
-    # plain standalone page -- multiple fixes for DOM-measurement timing did
-    # not resolve it, so this may be specific to that iframe sandbox). Showing
-    # the raw source is simple and always correct; paste it into
-    # https://mermaid.live or a markdown viewer that renders mermaid fences
-    # (GitHub, most IDEs) to view it visually.
-    st.code(mermaid_code, language="text")
-    st.caption("Paste this into https://mermaid.live to view it rendered.")
+    # iframe (the identical source rendered fine in a plain standalone page --
+    # several DOM-measurement-timing fixes didn't resolve it). streamlit-mermaid
+    # is a proper Streamlit custom component (not a raw iframe hack), which
+    # handles sizing through Streamlit's own component protocol instead.
+    try:
+        st_mermaid(mermaid_code)
+    except Exception as exc:
+        st.warning(f"Could not render the diagram inline ({exc}). Raw source below.")
+        st.code(mermaid_code, language="text")
+        st.caption("Paste this into https://mermaid.live to view it rendered.")
     st.markdown(after)
 
 

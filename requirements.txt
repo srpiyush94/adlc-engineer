@@ -5,3 +5,4 @@ langchain
 langfuse
 python-dotenv
 streamlit
+streamlit-mermaid

@@ -22,13 +22,32 @@ class TestSanitizeMermaid(unittest.TestCase):
         sanitized = _sanitize_mermaid(code)
         self.assertNotIn("--> graph\n", sanitized)
         self.assertNotIn("\ngraph -->", sanitized)
-        self.assertIn("n_graph[graph]", sanitized)
+        # the synthetic id must not contain "graph" as a substring at all --
+        # some mermaid parser versions fail to parse ANY unquoted identifier
+        # containing a reserved word as a substring, not just the bare word
+        # itself (confirmed against mermaid 10.2.4).
+        self.assertIn('entity1["graph"]', sanitized)
+        self.assertNotIn("n_graph", sanitized)
         # every mention of the reserved word becomes the same synthetic id + label
-        self.assertEqual(sanitized.count("n_graph[graph]"), 2)
+        self.assertEqual(sanitized.count('entity1["graph"]'), 2)
 
     def test_leaves_safe_diagrams_untouched(self):
         code = "graph TD\ndashboard --> scanner\nscanner --> llm"
         self.assertEqual(_sanitize_mermaid(code), code)
+
+    def test_quotes_unquoted_bracket_labels(self):
+        code = 'graph TD\n    Migrations["packages/core/src/migrations/"]'
+        # already quoted -- this specific label has a trailing "/" that
+        # collides with mermaid's parallelogram-shape shorthand ([/.../])
+        # when left unquoted; confirm it stays correctly quoted, not doubled.
+        sanitized = _sanitize_mermaid(code)
+        self.assertIn('Migrations["packages/core/src/migrations/"]', sanitized)
+        self.assertNotIn('""', sanitized)
+
+    def test_quotes_previously_unquoted_label(self):
+        code = "graph TD\n    DockerCompose[docker-compose.yml]"
+        sanitized = _sanitize_mermaid(code)
+        self.assertIn('DockerCompose["docker-compose.yml"]', sanitized)
 
     def test_leaves_diagram_type_declaration_line_alone(self):
         # "graph" in "graph TD" is the diagram type, not a node id -- must not be touched

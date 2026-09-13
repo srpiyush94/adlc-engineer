@@ -182,19 +182,50 @@ _MERMAID_RESERVED_WORDS = {
 _MERMAID_EDGE_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<src>[A-Za-z_][A-Za-z0-9_]*)(?P<arrow>\s*-->\s*)(?P<dst>[A-Za-z_][A-Za-z0-9_]*)\s*$"
 )
+_MERMAID_BRACKET_LABEL_RE = re.compile(r"\[([^\[\]]*)\]")
+
+
+def _quote_bracket_label(match: re.Match) -> str:
+    content = match.group(1)
+    if content.startswith('"') and content.endswith('"'):
+        return match.group(0)  # already quoted, leave alone
+    safe_content = content.replace('"', "'")
+    return f'["{safe_content}"]'
 
 
 def _sanitize_mermaid(mermaid_code: str) -> str:
-    """Rewrite a bare node id that collides with a mermaid reserved keyword
-    (e.g. a component literally named "graph", matching adlc_engineer/graph.py)
-    into a safe synthetic id with the original name kept as a bracketed label.
-    Mermaid's parser fails outright -- with no visible error in some embed
-    contexts -- on a bare reserved word used as a node id, so this is applied
-    unconditionally rather than only trusting the system prompt.
+    """Two independent fixes for mermaid syntax the LLM can otherwise produce
+    that parses incorrectly or fails outright, with no visible error in some
+    embed contexts:
+
+    1. A bare node id that collides with a mermaid reserved keyword (e.g. a
+       component literally named "graph", matching adlc_engineer/graph.py) is
+       rewritten to a synthetic id that does not contain the reserved word as
+       a substring at all (some mermaid parser versions -- confirmed against
+       the mermaid 10.2.4 bundled with the streamlit-mermaid dashboard
+       component -- fail to parse ANY unquoted identifier containing "graph"
+       as a substring, e.g. "n_graph", not just the exact bare word), with
+       the original name kept as a bracketed label instead (safe once quoted
+       by fix 2 below -- a *quoted* label may contain "graph" freely).
+    2. Every unquoted `[label]` is defensively quoted. Evidence-derived labels
+       are often file paths or other arbitrary strings; an unquoted label
+       ending or starting with certain characters (observed: a trailing "/",
+       e.g. "[...migrations/]") collides with mermaid's node-shape shorthand
+       (parallelogram/trapezoid/etc. use [/.../], [\\...\\], [(...)], ...),
+       silently misparsing into "Syntax error in text" instead of rendering.
+       Quoting is applied unconditionally rather than only for known-bad
+       characters, since the set of colliding characters is exactly mermaid's
+       shape-shorthand alphabet and not worth enumerating.
     """
 
+    synthetic_ids: dict = {}
+
     def safe_token(token: str) -> str:
-        return f"n_{token}[{token}]" if token.lower() in _MERMAID_RESERVED_WORDS else token
+        if token.lower() not in _MERMAID_RESERVED_WORDS:
+            return token
+        if token not in synthetic_ids:
+            synthetic_ids[token] = f"entity{len(synthetic_ids) + 1}"
+        return f'{synthetic_ids[token]}["{token}"]'
 
     lines = []
     for line in mermaid_code.splitlines():
@@ -206,7 +237,7 @@ def _sanitize_mermaid(mermaid_code: str) -> str:
             )
         else:
             lines.append(line)
-    return "\n".join(lines)
+    return _MERMAID_BRACKET_LABEL_RE.sub(_quote_bracket_label, "\n".join(lines))
 
 
 _NOT_FOUND = object()
