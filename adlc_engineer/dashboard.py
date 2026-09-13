@@ -15,6 +15,16 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 load_dotenv()
 
+try:
+    # Streamlit Community Cloud provides credentials via st.secrets, not a
+    # .env file. Bridge them into os.environ so llm.py's os.environ.get(...)
+    # calls work unchanged in both local (.env) and deployed (secrets.toml)
+    # contexts.
+    for _key, _value in st.secrets.items():
+        os.environ.setdefault(_key, str(_value))
+except st.errors.StreamlitSecretNotFoundError:
+    pass  # no Streamlit secrets configured -- local dev via .env, fine
+
 from adlc_engineer import repo_source
 from adlc_engineer.graph import build_graph
 from adlc_engineer.llm import get_langfuse_handler
