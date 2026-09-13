@@ -152,8 +152,10 @@ governance need — not adopted now for its own sake.
 
 - [ ] Write the Dockerfile (Cloud-Run/OpenShift-portable) — see Stage 0→1
   containerization step.
-- [ ] Bridge `st.secrets` into `os.environ` at Streamlit Cloud startup.
-- [ ] Restrict the deployed app's viewer list to the developer.
+- [x] Bridge `st.secrets` into `os.environ` at Streamlit Cloud startup —
+  deployed at https://adlc-engineer-ynlorsbncx6sc2gxooqjjg.streamlit.app/,
+  verified working end-to-end against a real GitHub repo (2026-09-13).
+- [x] Restrict the deployed app's viewer list to the developer.
 - [ ] Before onboarding any non-personal repository: resolve the Gemini
   API data-handling question above.
 - [ ] When the project reaches Stage 1 (team pilot): open ADR 0002 to
