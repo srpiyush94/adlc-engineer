@@ -46,15 +46,16 @@ def _render_report(report_markdown: str):
     mermaid_code = match.group(1)
 
     st.markdown(before)
-    st.components.v1.html(
-        f"""
-        <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-        <div class="mermaid">{mermaid_code}</div>
-        <script>mermaid.initialize({{startOnLoad: true}});</script>
-        """,
-        height=400,
-        scrolling=True,
-    )
+    # Rendering this inline via st.components.v1.html + mermaid.js produces a
+    # degenerate near-zero-size diagram inside Streamlit's sandboxed component
+    # iframe (confirmed: the identical mermaid source renders correctly in a
+    # plain standalone page -- multiple fixes for DOM-measurement timing did
+    # not resolve it, so this may be specific to that iframe sandbox). Showing
+    # the raw source is simple and always correct; paste it into
+    # https://mermaid.live or a markdown viewer that renders mermaid fences
+    # (GitHub, most IDEs) to view it visually.
+    st.code(mermaid_code, language="text")
+    st.caption("Paste this into https://mermaid.live to view it rendered.")
     st.markdown(after)
 
 

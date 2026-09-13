@@ -1,6 +1,7 @@
 """ADLC Engineer graph: scan_repo -> analyze_architecture -> propose_modernization -> assemble_report."""
 
 import json
+import re
 from typing import List, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -68,7 +69,9 @@ evidence dot-path (e.g. "frameworks.langgraph") or a real relative file path fro
 - If evidence for something (e.g. deployment, database, tests) is absent, say so explicitly as a gap in the \
 narrative rather than omitting it or inventing a plausible-sounding default.
 - The `mermaid` diagram's node labels must exactly match the `name` field of entries in `components`. Use \
-simple `graph TD` syntax.
+simple `graph TD` syntax, one edge per line as `NodeA --> NodeB`. Never use a mermaid reserved word \
+(graph, subgraph, end, class, click, style, classDef, direction) as a bare node identifier — mermaid's \
+parser fails outright on that.
 - Do not speculate about business purpose or scale beyond what the evidence supports.
 """
 
@@ -89,6 +92,39 @@ back a claim used in its reasoning.
 - `adr` should be a short Architecture Decision Record (context, decision, consequences) for the recommended \
 option, grounded in the same evidence.
 """
+
+
+_MERMAID_RESERVED_WORDS = {
+    "graph", "subgraph", "end", "class", "click", "style", "classDef", "direction", "flowchart",
+}
+_MERMAID_EDGE_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<src>[A-Za-z_][A-Za-z0-9_]*)(?P<arrow>\s*-->\s*)(?P<dst>[A-Za-z_][A-Za-z0-9_]*)\s*$"
+)
+
+
+def _sanitize_mermaid(mermaid_code: str) -> str:
+    """Rewrite a bare node id that collides with a mermaid reserved keyword
+    (e.g. a component literally named "graph", matching adlc_engineer/graph.py)
+    into a safe synthetic id with the original name kept as a bracketed label.
+    Mermaid's parser fails outright -- with no visible error in some embed
+    contexts -- on a bare reserved word used as a node id, so this is applied
+    unconditionally rather than only trusting the system prompt.
+    """
+
+    def safe_token(token: str) -> str:
+        return f"n_{token}[{token}]" if token.lower() in _MERMAID_RESERVED_WORDS else token
+
+    lines = []
+    for line in mermaid_code.splitlines():
+        match = _MERMAID_EDGE_LINE_RE.match(line)
+        if match:
+            lines.append(
+                f"{match.group('indent')}{safe_token(match.group('src'))}"
+                f"{match.group('arrow')}{safe_token(match.group('dst'))}"
+            )
+        else:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 _NOT_FOUND = object()
@@ -169,9 +205,11 @@ def build_graph():
         ]
         result: ArchitectureModel = structured_llm.invoke(messages)
         warnings = _check_architecture_citations(result, evidence, state["repo_path"])
+        model_dump = result.model_dump()
+        model_dump["mermaid"] = _sanitize_mermaid(model_dump["mermaid"])
         return {
             "architecture_model": {
-                **result.model_dump(),
+                **model_dump,
                 "citation_warnings": warnings,
             }
         }
