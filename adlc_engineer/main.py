@@ -1,103 +1,62 @@
-from typing import TypedDict
+"""CLI entrypoint: analyze a repository (local path or git URL) and write a modernization report.
 
-from langgraph.graph import StateGraph, START, END
+Run as: python -m adlc_engineer.main [--repo <path-or-url>] [--output <path>]
+"""
 
+import argparse
+import os
+from pathlib import Path
 
-class ADLCState(TypedDict):
-    user_request: str
-    discovery: dict
-    requirements: dict
-    architecture: dict
-    evaluation: dict
-    approval: dict
+from dotenv import load_dotenv
 
+load_dotenv()
 
-def discover(state: ADLCState):
-    print("\n[DISCOVER]")
+from adlc_engineer import repo_source  # noqa: E402  (must load env first)
+from adlc_engineer.graph import build_graph
+from adlc_engineer.llm import get_langfuse_handler
 
-    return {
-        "discovery": {
-            "problem": state["user_request"],
-            "status": "discovered"
-        }
-    }
-
-
-def define(state: ADLCState):
-    print("[DEFINE]")
-
-    return {
-        "requirements": {
-            "goal": state["discovery"]["problem"],
-            "status": "defined"
-        }
-    }
-
-
-def design(state: ADLCState):
-    print("[DESIGN]")
-
-    return {
-        "architecture": {
-            "approach": "Incremental modernization",
-            "status": "designed"
-        }
-    }
-
-
-def evaluate(state: ADLCState):
-    print("[EVALUATE]")
-
-    return {
-        "evaluation": {
-            "status": "passed",
-            "risks": [
-                "Repository evidence is not yet available",
-                "Architecture decision requires validation"
-            ]
-        }
-    }
-
-
-def human_approval(state: ADLCState):
-    print("[HUMAN APPROVAL]")
-
-    return {
-        "approval": {
-            "required": True,
-            "status": "pending"
-        }
-    }
-
-
-def build_graph():
-    graph = StateGraph(ADLCState)
-
-    graph.add_node("discover", discover)
-    graph.add_node("define", define)
-    graph.add_node("design", design)
-    graph.add_node("evaluate", evaluate)
-    graph.add_node("human_approval", human_approval)
-
-    graph.add_edge(START, "discover")
-    graph.add_edge("discover", "define")
-    graph.add_edge("define", "design")
-    graph.add_edge("design", "evaluate")
-    graph.add_edge("evaluate", "human_approval")
-    graph.add_edge("human_approval", END)
-
-    return graph.compile()
+DEFAULT_REPO = str(Path(__file__).resolve().parent.parent)
+DEFAULT_OUTPUT = str(Path(__file__).resolve().parent / "reports" / "architecture_report.md")
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Analyze a repository and produce a modernization report.")
+    parser.add_argument("--repo", default=DEFAULT_REPO, help="Local path or git URL of the repo to analyze.")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Where to write the Markdown report.")
+    args = parser.parse_args()
+
+    handler = get_langfuse_handler()
+    callbacks = [handler] if handler else []
+    if handler is None:
+        print("(Langfuse credentials not found in .env — running without tracing.)\n")
+
     agent = build_graph()
 
-    result = agent.invoke({
-        "user_request": "Modernize a Spring Boot application"
-    })
+    with repo_source.resolve_repo(args.repo) as (repo_path, display_name):
+        print(f"Analyzing repository: {display_name}")
+        config = {"callbacks": callbacks} if callbacks else {}
+        result = agent.invoke(
+            {"repo_path": repo_path, "repo_display_name": display_name},
+            config=config,
+        )
 
-    print("\n=== FINAL STATE ===")
-    print(result)
+    output_path = Path(args.output)
+    os.makedirs(output_path.parent, exist_ok=True)
+    output_path.write_text(result["report_markdown"], encoding="utf-8")
+
+    evidence = result["evidence"]
+    modernization = result["modernization"]
+    architecture_model = result["architecture_model"]
+    warning_count = len(architecture_model.get("citation_warnings", [])) + len(
+        modernization.get("citation_warnings", [])
+    )
+
+    print(f"\nReport written to: {output_path}")
+    print(f"Languages detected: {', '.join(evidence.get('languages', {}).keys()) or 'none'}")
+    print(f"Frameworks detected: {', '.join(evidence.get('frameworks', {}).keys()) or 'none'}")
+    print(f"Recommended modernization option: {modernization.get('recommended_option', 'not determined')}")
+    if warning_count:
+        print(f"WARNING: {warning_count} unresolved citation(s), see Assumptions section in the report.")
 
 
 if __name__ == "__main__":
