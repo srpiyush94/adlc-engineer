@@ -2,6 +2,11 @@
 
 A minimal LangGraph agent powered by Gemini Flash, with tool-calling and optional Langfuse tracing.
 
+For an in-depth walkthrough of how this qualifies as an "agent" and exactly
+how it executes, see the [docs/](docs/README.md) folder — it covers the
+agent concept, LangGraph mechanics, a full step-by-step execution trace with
+sequence diagrams, and how Langfuse tracing hooks in.
+
 ## Orchestration flow
 
 The graph has two nodes and one piece of conditional routing between them:
