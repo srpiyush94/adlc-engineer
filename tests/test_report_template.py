@@ -73,6 +73,37 @@ CHALLENGER = {
     "objecting_personas": ["Scalability"],
 }
 
+SPECIFICATION = {
+    "requirement_text": "System must support 10,000 concurrent requests with p95 latency under 300ms "
+                         "and 99.9% availability.",
+    "constraints": [
+        {"description": "System must support 10,000 concurrent requests.", "citations": ["requirement_text"]},
+        {"description": "p95 latency must be under 300ms.", "citations": ["requirement_text"]},
+        {"description": "Availability must be at least 99.9%.", "citations": ["deployment.gaps"]},
+    ],
+    "acceptance_criteria": [
+        {"id": "AC-1", "description": "Load test sustains 10,000 concurrent requests without error rate increase.",
+         "citations": ["requirement_text"]},
+        {"id": "AC-2", "description": "p95 latency stays under 300ms under the load in AC-1.",
+         "citations": ["requirement_text"]},
+        {"id": "AC-3", "description": "Deployment supports 99.9% availability via redundancy/rollback tooling.",
+         "citations": ["deployment.gaps"]},
+    ],
+    "citation_warnings": [],
+}
+
+MODERNIZATION_WITH_COMPLIANCE = {
+    **MODERNIZATION,
+    "compliance_assessment": [
+        {"criterion_id": "AC-1", "status": "not_satisfied",
+         "reasoning": "No load-testing or horizontal scaling evidence exists today.", "citations": ["coupling"]},
+        {"criterion_id": "AC-2", "status": "partial",
+         "reasoning": "No latency instrumentation found to confirm.", "citations": ["languages.Python"]},
+        {"criterion_id": "AC-3", "status": "not_satisfied",
+         "reasoning": "No deployment infrastructure found.", "citations": ["deployment.gaps"]},
+    ],
+}
+
 EXPECTED_HEADERS = [
     "## 1. Executive Summary",
     "## 2. Current Architecture",
@@ -139,6 +170,47 @@ class TestReportTemplateChallenger(unittest.TestCase):
         report = render_report(EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION, "/tmp/repo", challenger=CHALLENGER)
         for persona in ["Security", "Scalability", "Cost", "Reliability", "Implementation"]:
             self.assertIn(f"### {persona}", report)
+
+
+class TestReportTemplateSpecification(unittest.TestCase):
+    def test_section_16_specification_when_only_specification_provided(self):
+        report = render_report(
+            EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION_WITH_COMPLIANCE, "/tmp/repo", specification=SPECIFICATION
+        )
+        expected = EXPECTED_HEADERS[:-1] + [
+            "## 16. Specification & Acceptance Criteria", "## Appendix A: Evidence Data",
+        ]
+        positions = [report.index(h) for h in expected]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_specification_then_challenger_numbered_16_and_17_when_both_provided(self):
+        report = render_report(
+            EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION_WITH_COMPLIANCE, "/tmp/repo",
+            challenger=CHALLENGER, specification=SPECIFICATION,
+        )
+        expected = EXPECTED_HEADERS[:-1] + [
+            "## 16. Specification & Acceptance Criteria",
+            "## 17. Architecture Challenger Review",
+            "## Appendix A: Evidence Data",
+        ]
+        positions = [report.index(h) for h in expected]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_challenger_only_still_numbered_16_unchanged(self):
+        report = render_report(EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION, "/tmp/repo", challenger=CHALLENGER)
+        self.assertIn("## 16. Architecture Challenger Review", report)
+
+    def test_neither_specification_nor_challenger_present_by_default(self):
+        report = render_report(EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION, "/tmp/repo")
+        self.assertNotIn("Specification & Acceptance Criteria", report)
+        self.assertNotIn("Architecture Challenger Review", report)
+
+    def test_acceptance_criteria_and_compliance_status_appear(self):
+        report = render_report(
+            EVIDENCE, ARCHITECTURE_MODEL, MODERNIZATION_WITH_COMPLIANCE, "/tmp/repo", specification=SPECIFICATION
+        )
+        self.assertIn("AC-1", report)
+        self.assertIn("not_satisfied", report)
 
 
 if __name__ == "__main__":

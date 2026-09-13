@@ -79,6 +79,15 @@ def _run_analysis_tab():
         value=str(Path(__file__).resolve().parent.parent),
         help="Either a local filesystem path or a GitHub URL (shallow-cloned read-only).",
     )
+    requirement_text = st.text_area(
+        "Business requirement (optional)",
+        value="",
+        placeholder="e.g. System must support 10,000 concurrent requests with p95 latency under 300ms "
+                    "and 99.9% availability.",
+        help="Leave blank to skip. When supplied, the agent derives a Specification and Acceptance "
+             "Criteria, and assesses the recommended modernization option against them (adds 1 more "
+             "LLM call).",
+    )
     run_challenge = st.checkbox(
         "Run Architecture Challenger (5 reviewer critiques + possible revision — up to 6 extra LLM calls)",
         value=False,
@@ -94,18 +103,24 @@ def _run_analysis_tab():
     if handler is None:
         st.info("Langfuse credentials not found in .env — running without tracing.")
 
-    spinner_text = (
-        "Analyzing repository — this involves up to eight LLM calls and can take a few minutes..."
-        if run_challenge
-        else "Analyzing repository — this involves two LLM calls and can take a minute or two..."
-    )
+    num_calls = 2
+    if requirement_text.strip():
+        num_calls += 1
+    if run_challenge:
+        num_calls += 6
+    spinner_text = f"Analyzing repository — this involves up to {num_calls} LLM calls and can take a few minutes..."
     with st.spinner(spinner_text):
         try:
             with repo_source.resolve_repo(repo_arg) as (repo_path, display_name):
                 agent = build_graph()
                 config = {"callbacks": callbacks} if callbacks else {}
                 result = agent.invoke(
-                    {"repo_path": repo_path, "repo_display_name": display_name, "run_challenger": run_challenge},
+                    {
+                        "repo_path": repo_path,
+                        "repo_display_name": display_name,
+                        "run_challenger": run_challenge,
+                        "requirement_text": requirement_text,
+                    },
                     config=config,
                 )
         except (ValueError, RuntimeError) as exc:
@@ -135,6 +150,19 @@ def _run_analysis_tab():
             )
         else:
             st.info("Architecture Challenger: no objections raised; original recommendation stands.")
+
+    specification = result.get("specification")
+    if requirement_text.strip() and specification:
+        compliance = modernization.get("compliance_assessment") or []
+        total = len(specification.get("acceptance_criteria", []))
+        if compliance:
+            satisfied = sum(1 for a in compliance if a["status"] == "satisfied")
+            st.info(
+                f"Specification: {total} acceptance criteria derived; recommended option satisfies "
+                f"{satisfied}/{len(compliance)}."
+            )
+        else:
+            st.info("Specification derived, but no compliance assessment was produced.")
 
     _render_report(result["report_markdown"])
 

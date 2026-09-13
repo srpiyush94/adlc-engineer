@@ -13,6 +13,7 @@ from adlc_engineer.graph import (
     check_citations,
     route_after_challenger_review,
     route_after_modernization,
+    route_after_scan,
 )
 
 
@@ -124,6 +125,31 @@ class TestRouteAfterChallengerReview(unittest.TestCase):
     def test_assembles_report_when_no_objections(self):
         state = {"challenger_summary": {"has_objections": False}}
         self.assertEqual(route_after_challenger_review(state), "assemble_report")
+
+
+class TestRouteAfterScan(unittest.TestCase):
+    def test_routes_to_derive_specification_when_requirement_present(self):
+        self.assertEqual(
+            route_after_scan({"requirement_text": "Must support 10k RPS"}), "derive_specification"
+        )
+
+    def test_routes_to_analyze_architecture_when_requirement_empty(self):
+        self.assertEqual(route_after_scan({"requirement_text": ""}), "analyze_architecture")
+
+    def test_routes_to_analyze_architecture_when_requirement_whitespace_only(self):
+        self.assertEqual(route_after_scan({"requirement_text": "   "}), "analyze_architecture")
+
+    def test_routes_to_analyze_architecture_when_key_missing(self):
+        self.assertEqual(route_after_scan({}), "analyze_architecture")
+
+
+class TestSpecificationCitationSentinel(unittest.TestCase):
+    def test_requirement_text_sentinel_resolves_when_added_to_evidence_dict(self):
+        spec_evidence = {
+            "languages": {"Python": {"files": 1, "loc": 10}},
+            "requirement_text": "Must support 10k RPS",
+        }
+        self.assertEqual(check_citations(["requirement_text"], spec_evidence, "/tmp/repo"), [])
 
 
 if __name__ == "__main__":

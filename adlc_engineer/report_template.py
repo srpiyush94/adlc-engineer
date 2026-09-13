@@ -238,9 +238,9 @@ def _render_traceability(architecture_model, modernization):
 _CHALLENGER_PERSONA_ORDER = ["Security", "Scalability", "Cost", "Reliability", "Implementation"]
 
 
-def _render_challenger_review(challenger: dict, modernization: dict) -> str:
+def _render_challenger_review(challenger: dict, modernization: dict, section_number: int) -> str:
     reviews = challenger.get("reviews", {})
-    lines = ["## 16. Architecture Challenger Review\n"]
+    lines = [f"## {section_number}. Architecture Challenger Review\n"]
     lines.append(
         f"The recommended option (**{modernization.get('recommended_option', 'not determined')}**) was "
         "reviewed by a five-persona challenge panel, each citing evidence for their finding.\n"
@@ -274,6 +274,53 @@ def _render_challenger_review(challenger: dict, modernization: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_specification(specification: dict, modernization: dict, section_number: int) -> str:
+    lines = [f"## {section_number}. Specification & Acceptance Criteria\n"]
+    lines.append("**Business requirement (as supplied):**\n")
+    lines.append(f"> {specification.get('requirement_text', '')}\n")
+
+    lines.append("### Derived Constraints\n")
+    constraints = specification.get("constraints", [])
+    if not constraints:
+        lines.append("_No constraints derived._\n")
+    else:
+        for c in constraints:
+            lines.append(f"- {c['description']} — {_fmt_citations(c.get('citations', []))}")
+        lines.append("")
+
+    lines.append("### Acceptance Criteria\n")
+    criteria = specification.get("acceptance_criteria", [])
+    if not criteria:
+        lines.append("_No acceptance criteria derived._\n")
+    else:
+        for ac in criteria:
+            lines.append(f"- **{ac['id']}**: {ac['description']} — {_fmt_citations(ac.get('citations', []))}")
+        lines.append("")
+
+    recommended_name = modernization.get("recommended_option", "not determined")
+    lines.append(f"### Compliance Assessment — Recommended Option: {recommended_name}\n")
+    assessments = modernization.get("compliance_assessment") or []
+    if not assessments:
+        lines.append("_No compliance assessment available for the recommended option._\n")
+    else:
+        by_id = {ac["id"]: ac["description"] for ac in criteria}
+        lines.append("| Criterion | Description | Status | Reasoning | Citations |")
+        lines.append("|---|---|---|---|---|")
+        for a in assessments:
+            desc = by_id.get(a["criterion_id"], "_unknown criterion_")
+            lines.append(
+                f"| {a['criterion_id']} | {desc} | {a['status']} | {a['reasoning']} | "
+                f"{_fmt_citations(a.get('citations', []))} |"
+            )
+        lines.append("")
+
+    if specification.get("citation_warnings"):
+        lines.append("**Citation warnings:**")
+        for w in specification["citation_warnings"]:
+            lines.append(f"- {w}")
+    return "\n".join(lines) + "\n"
+
+
 def _render_appendix(evidence):
     return "## Appendix A: Evidence Data\n\n```json\n" + json.dumps(evidence, indent=2) + "\n```\n"
 
@@ -284,6 +331,7 @@ def render_report(
     modernization: dict,
     repo_display_name: str,
     challenger: dict = None,
+    specification: dict = None,
 ) -> str:
     sections = [
         f"# ADLC Engineer — Architecture & Modernization Report\n\n**Repository:** {repo_display_name}\n",
@@ -303,7 +351,17 @@ def render_report(
         _render_validation_plan(evidence),
         _render_traceability(architecture_model, modernization),
     ]
+
+    optional_sections = []
+    if specification is not None:
+        optional_sections.append((_render_specification, (specification, modernization)))
     if challenger is not None:
-        sections.append(_render_challenger_review(challenger, modernization))
+        optional_sections.append((_render_challenger_review, (challenger, modernization)))
+
+    next_number = 16
+    for render_fn, args in optional_sections:
+        sections.append(render_fn(*args, next_number))
+        next_number += 1
+
     sections.append(_render_appendix(evidence))
     return "\n".join(sections)

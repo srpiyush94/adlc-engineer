@@ -49,6 +49,29 @@ class ModernizationOption(BaseModel):
     citations: List[str]
 
 
+class SpecConstraint(BaseModel):
+    description: str
+    citations: List[str]
+
+
+class AcceptanceCriterion(BaseModel):
+    id: str  # "AC-1", "AC-2", ... sequential, LLM-assigned in output order
+    description: str
+    citations: List[str]
+
+
+class SpecificationModel(BaseModel):
+    constraints: List[SpecConstraint]
+    acceptance_criteria: List[AcceptanceCriterion]
+
+
+class ComplianceAssessment(BaseModel):
+    criterion_id: str  # must match an AcceptanceCriterion.id
+    status: Literal["satisfied", "not_satisfied", "partial"]
+    reasoning: str
+    citations: List[str]
+
+
 class ModernizationModel(BaseModel):
     options: List[ModernizationOption]
     recommended_option: str
@@ -57,6 +80,7 @@ class ModernizationModel(BaseModel):
     risks: List[str]
     assumptions: List[str]
     revision_notes: Optional[str] = None  # only populated by revise_modernization
+    compliance_assessment: Optional[List[ComplianceAssessment]] = None  # only when a specification exists
 
 
 class ReviewFinding(BaseModel):
@@ -99,6 +123,38 @@ back a claim used in its reasoning.
 - `recommended_option` must be one of the five option names, verbatim.
 - `adr` should be a short Architecture Decision Record (context, decision, consequences) for the recommended \
 option, grounded in the same evidence.
+- If a SPECIFICATION section (derived from a user-supplied business requirement) is present in the input, \
+you must additionally populate `compliance_assessment`: for the `recommended_option` you choose, and ONLY \
+that option, assess EVERY acceptance criterion listed in the specification. Each assessment must set \
+`criterion_id` to the exact `id` from the specification's acceptance criteria, `status` to "satisfied", \
+"not_satisfied", or "partial", `reasoning` grounded in the recommended option's actual characteristics and \
+the repository evidence (not the specification's wording alone), and non-empty `citations`.
+- If no SPECIFICATION section is present in the input, leave `compliance_assessment` null -- do not invent \
+acceptance criteria or assess compliance against criteria that were never supplied.
+"""
+
+SPECIFICATION_SYSTEM_PROMPT = """You are a Requirements Analyst. You will be given a BUSINESS REQUIREMENT \
+as free text, written by a human stakeholder, plus repository EVIDENCE gathered by a deterministic scanner. \
+Your job is to derive a formal Specification: explicit constraints extracted from the requirement, and \
+concrete, testable Acceptance Criteria derived from those constraints.
+
+Rules:
+- Extract constraints ONLY from what the requirement text actually states. Never invent numeric targets, \
+SLAs, or scale figures the requirement did not mention -- if the requirement is vague on a dimension (e.g. \
+it mentions latency but not availability), do not fabricate an availability number for it.
+- Each constraint's `description` must be traceable to a specific phrase in the requirement text.
+- Each acceptance criterion must be concrete and evaluable (e.g. "p95 latency under 300ms under 10,000 \
+concurrent requests", not "the system should be fast"), and must have a unique `id` of the form "AC-1", \
+"AC-2", ... in the order produced. Produce at least one acceptance criterion per constraint.
+- When a constraint or acceptance criterion can be usefully cross-referenced against the CURRENT state of \
+the repository (e.g. a testability criterion against `tests.count`/`tests.gap`, an availability criterion \
+against `deployment.gaps`, a scalability criterion against `coupling` or `architecture_pattern_guess`), cite \
+that evidence dot-path or file path in `citations`.
+- When a constraint or acceptance criterion is a direct restatement of the requirement with nothing in the \
+repository evidence to cross-reference, cite the literal string "requirement_text" in `citations` rather \
+than leaving `citations` empty -- this documents that its grounding is the user's own stated requirement, \
+not the repository scan.
+- Never leave `citations` empty.
 """
 
 _REVIEWER_SYSTEM_PROMPT_TEMPLATE = """You are the {persona} Reviewer on an architecture challenge panel. \
@@ -173,6 +229,11 @@ changing that part, citing evidence.
 which persona's objection drove each change.
 - `recommended_option` may change to a different one of the five if the objections genuinely warrant it, but \
 must not change gratuitously.
+- If a SPECIFICATION section is present, re-assess `compliance_assessment` for whichever option is \
+`recommended_option` after this revision (even if unchanged from before) -- do not carry over the original \
+assessment verbatim, since revised reasoning/risks/migration_roadmap content may change whether a criterion \
+is satisfied.
+- If no SPECIFICATION section is present, leave `compliance_assessment` null, same as the original proposal.
 """
 
 
@@ -299,7 +360,63 @@ def _check_modernization_citations(model: ModernizationModel, evidence: dict, re
         warnings.extend(check_citations(option.citations, evidence, repo_path))
     if len(model.options) != 5:
         warnings.append(f"Expected 5 modernization options, got {len(model.options)}.")
+    if model.compliance_assessment:
+        for assessment in model.compliance_assessment:
+            warnings.extend(check_citations(assessment.citations, evidence, repo_path))
     return warnings
+
+
+def _check_specification_citations(
+    model: SpecificationModel, evidence: dict, requirement_text: str, repo_path: str
+) -> List[str]:
+    # "requirement_text" is a valid citation sentinel for constraints/criteria that are a
+    # direct restatement of the user's own requirement with nothing in the repo scan to
+    # cross-reference -- reuses check_citations unchanged by adding it as a resolvable key.
+    spec_evidence = {**evidence, "requirement_text": requirement_text}
+    warnings = []
+    for constraint in model.constraints:
+        warnings.extend(check_citations(constraint.citations, spec_evidence, repo_path))
+    for criterion in model.acceptance_criteria:
+        warnings.extend(check_citations(criterion.citations, spec_evidence, repo_path))
+    if not model.acceptance_criteria:
+        warnings.append("No acceptance criteria derived from the requirement.")
+    return warnings
+
+
+def _format_specification_context(specification: dict) -> str:
+    return (
+        f"\n\nSPECIFICATION (derived from a user-supplied business requirement):\n"
+        f"Requirement: {specification['requirement_text']}\n"
+        f"Constraints: {json.dumps(specification['constraints'], indent=2)}\n"
+        f"Acceptance Criteria: {json.dumps(specification['acceptance_criteria'], indent=2)}"
+    )
+
+
+def _finalize_modernization(
+    result: ModernizationModel, specification, evidence: dict, repo_path: str, revised: bool
+) -> dict:
+    result_dump = result.model_dump()
+    if not specification:
+        result_dump["compliance_assessment"] = None
+    warnings = _check_modernization_citations(result, evidence, repo_path)
+    if specification:
+        ac_ids = {ac["id"] for ac in specification["acceptance_criteria"]}
+        assessed_ids = {a["criterion_id"] for a in (result_dump.get("compliance_assessment") or [])}
+        if ac_ids != assessed_ids:
+            warnings.append(
+                f"Compliance assessment covers {sorted(assessed_ids)} but acceptance criteria "
+                f"are {sorted(ac_ids)}."
+            )
+    return {**result_dump, "citation_warnings": warnings, "revised": revised}
+
+
+def route_after_scan(state: dict) -> str:
+    """Runs derive_specification only if the caller supplied a non-empty business
+    requirement -- preserving the original scan_repo -> analyze_architecture default
+    when none is given."""
+    if state.get("requirement_text", "").strip():
+        return "derive_specification"
+    return "analyze_architecture"
 
 
 REVIEWER_SPECS = [
@@ -338,6 +455,29 @@ def build_graph():
         evidence = scanner.scan_repository(state["repo_path"], state["repo_display_name"])
         return {"evidence": evidence}
 
+    def derive_specification(state: ADLCState):
+        requirement_text = state["requirement_text"]
+        evidence = state["evidence"]
+        structured_llm = llm.with_structured_output(SpecificationModel)
+        messages = [
+            SystemMessage(content=SPECIFICATION_SYSTEM_PROMPT),
+            HumanMessage(
+                content=(
+                    f"BUSINESS REQUIREMENT (verbatim, user-provided):\n{requirement_text}\n\n"
+                    f"EVIDENCE:\n{json.dumps(evidence, indent=2)}"
+                )
+            ),
+        ]
+        result: SpecificationModel = structured_llm.invoke(messages)
+        warnings = _check_specification_citations(result, evidence, requirement_text, state["repo_path"])
+        return {
+            "specification": {
+                **result.model_dump(),
+                "requirement_text": requirement_text,
+                "citation_warnings": warnings,
+            }
+        }
+
     def analyze_architecture(state: ADLCState):
         evidence = state["evidence"]
         structured_llm = llm.with_structured_output(ArchitectureModel)
@@ -359,26 +499,25 @@ def build_graph():
     def propose_modernization(state: ADLCState):
         evidence = state["evidence"]
         architecture_model = state["architecture_model"]
+        specification = state.get("specification")
         structured_llm = llm.with_structured_output(ModernizationModel)
+        human_content = (
+            f"EVIDENCE:\n{json.dumps(evidence, indent=2)}\n\n"
+            f"ARCHITECTURE MODEL:\n"
+            f"Narrative: {architecture_model['narrative']}\n"
+            f"Components: {json.dumps(architecture_model['components'], indent=2)}"
+        )
+        if specification:
+            human_content += _format_specification_context(specification)
         messages = [
             SystemMessage(content=MODERNIZATION_SYSTEM_PROMPT),
-            HumanMessage(
-                content=(
-                    f"EVIDENCE:\n{json.dumps(evidence, indent=2)}\n\n"
-                    f"ARCHITECTURE MODEL:\n"
-                    f"Narrative: {architecture_model['narrative']}\n"
-                    f"Components: {json.dumps(architecture_model['components'], indent=2)}"
-                )
-            ),
+            HumanMessage(content=human_content),
         ]
         result: ModernizationModel = structured_llm.invoke(messages)
-        warnings = _check_modernization_citations(result, evidence, state["repo_path"])
         return {
-            "modernization": {
-                **result.model_dump(),
-                "citation_warnings": warnings,
-                "revised": False,
-            }
+            "modernization": _finalize_modernization(
+                result, specification, evidence, state["repo_path"], revised=False
+            )
         }
 
     def _build_reviewer_node(persona: str, focus_description: str, state_key: str):
@@ -432,45 +571,47 @@ def build_graph():
     def revise_modernization(state: ADLCState):
         evidence = state["evidence"]
         original_modernization = state["modernization"]
+        specification = state.get("specification")
         objections = [
             {"persona": persona, **finding}
             for persona, finding in state["challenger_summary"]["reviews"].items()
             if finding.get("has_objection")
         ]
         structured_llm = llm.with_structured_output(ModernizationModel)
+        human_content = (
+            f"EVIDENCE:\n{json.dumps(evidence, indent=2)}\n\n"
+            f"ORIGINAL MODERNIZATION MODEL:\n{json.dumps(original_modernization, indent=2)}\n\n"
+            f"PANEL OBJECTIONS:\n{json.dumps(objections, indent=2)}"
+        )
+        if specification:
+            human_content += _format_specification_context(specification)
         messages = [
             SystemMessage(content=REVISION_SYSTEM_PROMPT),
-            HumanMessage(
-                content=(
-                    f"EVIDENCE:\n{json.dumps(evidence, indent=2)}\n\n"
-                    f"ORIGINAL MODERNIZATION MODEL:\n{json.dumps(original_modernization, indent=2)}\n\n"
-                    f"PANEL OBJECTIONS:\n{json.dumps(objections, indent=2)}"
-                )
-            ),
+            HumanMessage(content=human_content),
         ]
         result: ModernizationModel = structured_llm.invoke(messages)
-        warnings = _check_modernization_citations(result, evidence, state["repo_path"])
         return {
-            "modernization": {
-                **result.model_dump(),
-                "citation_warnings": warnings,
-                "revised": True,
-            }
+            "modernization": _finalize_modernization(
+                result, specification, evidence, state["repo_path"], revised=True
+            )
         }
 
     def assemble_report(state: ADLCState):
         challenger = state.get("challenger_summary") if state.get("run_challenger") else None
+        specification = state.get("specification")
         report_markdown = report_template.render_report(
             evidence=state["evidence"],
             architecture_model=state["architecture_model"],
             modernization=state["modernization"],
             repo_display_name=state["repo_display_name"],
             challenger=challenger,
+            specification=specification,
         )
         return {"report_markdown": report_markdown}
 
     graph = StateGraph(ADLCState)
     graph.add_node("scan_repo", scan_repo)
+    graph.add_node("derive_specification", derive_specification)
     graph.add_node("analyze_architecture", analyze_architecture)
     graph.add_node("propose_modernization", propose_modernization)
     for persona, state_key, focus in REVIEWER_SPECS:
@@ -480,7 +621,12 @@ def build_graph():
     graph.add_node("assemble_report", assemble_report)
 
     graph.add_edge(START, "scan_repo")
-    graph.add_edge("scan_repo", "analyze_architecture")
+    graph.add_conditional_edges(
+        "scan_repo",
+        route_after_scan,
+        path_map=["derive_specification", "analyze_architecture"],
+    )
+    graph.add_edge("derive_specification", "analyze_architecture")
     graph.add_edge("analyze_architecture", "propose_modernization")
     graph.add_conditional_edges(
         "propose_modernization",

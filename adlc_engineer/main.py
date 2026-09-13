@@ -31,6 +31,15 @@ def main():
              "modernization option, with one revision pass if they object. Worst case adds 6 more LLM "
              "calls (8 total vs. 2 by default) -- opt in only when you have Gemini quota headroom.",
     )
+    parser.add_argument(
+        "--requirement",
+        default="",
+        help="Optional business requirement free text (e.g. 'System must support 10,000 concurrent "
+             "requests with p95 latency under 300ms and 99.9%% availability'). When supplied, the agent "
+             "derives a Specification and Acceptance Criteria and assesses the recommended modernization "
+             "option against them. Adds 1 more LLM call. Empty by default -- pipeline behaves exactly as "
+             "before.",
+    )
     args = parser.parse_args()
 
     handler = get_langfuse_handler()
@@ -44,7 +53,12 @@ def main():
         print(f"Analyzing repository: {display_name}")
         config = {"callbacks": callbacks} if callbacks else {}
         result = agent.invoke(
-            {"repo_path": repo_path, "repo_display_name": display_name, "run_challenger": args.challenge},
+            {
+                "repo_path": repo_path,
+                "repo_display_name": display_name,
+                "run_challenger": args.challenge,
+                "requirement_text": args.requirement,
+            },
             config=config,
         )
 
@@ -75,6 +89,19 @@ def main():
             )
         else:
             print("Architecture Challenger: no objections raised; original recommendation stands.")
+
+    specification = result.get("specification")
+    if args.requirement and specification:
+        compliance = modernization.get("compliance_assessment") or []
+        total = len(specification.get("acceptance_criteria", []))
+        if compliance:
+            satisfied = sum(1 for a in compliance if a["status"] == "satisfied")
+            print(
+                f"Specification: {total} acceptance criteria derived; recommended option satisfies "
+                f"{satisfied}/{len(compliance)}."
+            )
+        else:
+            print("Specification derived, but no compliance assessment was produced.")
 
 
 if __name__ == "__main__":

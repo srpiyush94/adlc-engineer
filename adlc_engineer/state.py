@@ -19,3 +19,7 @@ class ADLCState(TypedDict):
     reliability_review: dict
     implementation_review: dict
     challenger_summary: dict
+
+    # --- Spec-Driven Development (opt-in) ---
+    requirement_text: str
+    specification: dict
