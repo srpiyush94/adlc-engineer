@@ -49,3 +49,7 @@ newer modules from the component list, and recommendation quality.
 - AC-7. Section 6 mentions CI/CD only when the CI/CD gap is present, and
   containerization only when a Dockerfile/docker-compose gap is present.
 - AC-8. A re-scan of this repo reports no `.claude/` paths anywhere in the evidence.
+- AC-9. The report's Section 4 table agrees with the scanner: a package is shown as
+  imported ("Yes") unless it is in `declared_but_not_directly_imported`. (Added after a
+  deployed report showed `python-dotenv` as "No" in the table while the sentence below it
+  correctly omitted it; the table had its own, framework-only check.)

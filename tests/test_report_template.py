@@ -1,10 +1,12 @@
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from adlc_engineer.report_template import _render_constraints, render_report
+from adlc_engineer.report_template import _render_constraints, _render_dependency_map, render_report
+from adlc_engineer.scanner import scan_repository
 
 EVIDENCE = {
     "repo_meta": {"source": "/tmp/repo", "type": "local_path"},
@@ -234,6 +236,38 @@ class TestConstraintsSection(unittest.TestCase):  # spec 0002, AC-7
 
     def test_only_platform_file_gaps_report_no_constraint(self):
         self.assertIn("No significant technical constraints", self.render(["No Procfile found", "No render.yaml found"]))
+
+
+class TestDependencyTable(unittest.TestCase):  # spec 0002, AC-9
+    def rows(self, dependencies, frameworks=None):
+        out = _render_dependency_map({"dependencies": dependencies, "frameworks": frameworks or {}})
+        return {line.split("|")[1].strip(): line.split("|")[2].strip()
+                for line in out.splitlines() if line.startswith("| ") and "Declared" not in line}
+
+    def test_table_follows_scanner_field_not_framework_markers(self):
+        rows = self.rows({
+            "declared": ["python-dotenv", "streamlit-mermaid", "langchain"],
+            "source_file": "requirements.txt",
+            "declared_but_not_directly_imported": ["langchain"],
+        })
+        self.assertEqual(rows, {"python-dotenv": "Yes", "streamlit-mermaid": "Yes", "langchain": "No"})
+
+    def test_falls_back_to_framework_check_when_scanner_field_absent(self):
+        rows = self.rows({"declared": ["langgraph", "requests"], "source_file": "requirements.txt"},
+                         frameworks={"langgraph": ["main.py:1"]})
+        self.assertEqual(rows, {"langgraph": "Yes", "requests": "No"})
+
+    def test_real_scan_renders_table_consistent_with_sentence(self):
+        with tempfile.TemporaryDirectory() as repo:
+            with open(os.path.join(repo, "requirements.txt"), "w") as f:
+                f.write("python-dotenv\nlangchain\n")
+            with open(os.path.join(repo, "main.py"), "w") as f:
+                f.write("from dotenv import load_dotenv\n")
+            out = _render_dependency_map(scan_repository(repo, repo))
+        self.assertIn("| python-dotenv | Yes |", out)
+        self.assertIn("| langchain | No |", out)
+        self.assertIn("`langchain`", out.split("Declared but not directly imported")[1])
+        self.assertNotIn("`python-dotenv`", out)
 
 
 if __name__ == "__main__":
