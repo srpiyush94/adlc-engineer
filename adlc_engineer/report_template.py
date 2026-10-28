@@ -342,11 +342,11 @@ def _render_plan(plan: dict, section_number: int) -> str:
         lines.extend([header, divider])
         for t in tasks:
             row = (
-                f"| {t['id']} | **{_cell(t['title'])}** — {_cell(t['rationale'])} | `{_cell(t['gap_ref'])}` | "
-                f"{_cell(t['acceptance_check'])} | {', '.join(t['depends_on']) or '—'} | {t['effort']} |"
+                f"| {_cell(t['id'])} | **{_cell(t['title'])}** — {_cell(t['rationale'])} | `{_cell(t['gap_ref'])}` | "
+                f"{_cell(t['acceptance_check'])} | {_cell(', '.join(t['depends_on'])) or '—'} | {_cell(t['effort'])} |"
             )
             if has_criteria:
-                row += f" {', '.join(t.get('criteria_refs', [])) or '—'} |"
+                row += f" {_cell(', '.join(t.get('criteria_refs', []))) or '—'} |"
             row += f" {_fmt_citations(t.get('citations', []))} |"
             lines.append(row)
         lines.append("")

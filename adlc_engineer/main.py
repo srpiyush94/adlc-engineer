@@ -56,6 +56,11 @@ def main():
     )
     args = parser.parse_args()
 
+    write_adr = args.write_adr
+    if write_adr and repo_source.looks_like_git_url(args.repo):
+        print("WARNING: --write-adr ignored: the repo is a temporary git clone, so the file would be discarded.")
+        write_adr = False
+
     handler = get_langfuse_handler()
     callbacks = [handler] if handler else []
     if handler is None:
@@ -77,12 +82,13 @@ def main():
             config=config,
         )
 
-    if args.write_adr:
-        if repo_source.looks_like_git_url(args.repo):
-            print("WARNING: --write-adr ignored: the repo is a temporary git clone, so the file would be discarded.")
-        else:
-            adr_path = adr_writer.write_adr(repo_path, result["modernization"])
-            print(f"ADR written to: {adr_path} (status: Proposed)")
+    if write_adr:
+        adr_path, indexed = adr_writer.write_adr(
+            repo_path, result["modernization"], challenger=result.get("challenger_summary")
+        )
+        print(f"ADR written to: {adr_path} (status: Proposed)")
+        if not indexed:
+            print("WARNING: docs/adr/README.md has no index table to add this ADR to; add the row by hand.")
 
     output_path = Path(args.output)
     os.makedirs(output_path.parent, exist_ok=True)
