@@ -321,7 +321,7 @@ def _render_specification(specification: dict, modernization: dict, section_numb
     return "\n".join(lines) + "\n"
 
 
-newdef _cell(text) -> str:
+def _cell(text) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
