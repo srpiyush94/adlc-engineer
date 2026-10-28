@@ -260,6 +260,15 @@ def _render_challenger_review(challenger: dict, modernization: dict, section_num
         lines.append(f"- **Objection raised:** {objection} (severity: {finding.get('severity', 'none')})")
         lines.append(f"- **Finding:** {finding.get('summary', '_no summary provided_')}")
         lines.append(f"- **Citations:** {_fmt_citations(finding.get('citations', []))}")
+        concerns = finding.get("concerns") or []
+        if concerns:
+            lines.append("- **Concerns:**")
+            for concern in concerns:
+                lines.append(
+                    f"  - {concern['description']} — {_fmt_citations(concern.get('citations', []))}"
+                )
+        else:
+            lines.append("- **Concerns:** _none listed_")
         if finding.get("citation_warnings"):
             lines.append(f"- **Citation warnings:** {'; '.join(finding['citation_warnings'])}")
         lines.append("")

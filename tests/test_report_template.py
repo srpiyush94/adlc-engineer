@@ -238,6 +238,31 @@ class TestConstraintsSection(unittest.TestCase):  # spec 0002, AC-7
         self.assertIn("No significant technical constraints", self.render(["No Procfile found", "No render.yaml found"]))
 
 
+class TestChallengerConcernsSection(unittest.TestCase):  # spec 0003, AC-6
+    def render(self, reviews):
+        from adlc_engineer.report_template import _render_challenger_review
+        challenger = {"reviews": reviews, "has_objections": False, "objecting_personas": []}
+        return _render_challenger_review(challenger, {"recommended_option": "Modernize monolith"}, 16)
+
+    def test_concerns_listed_with_citations(self):
+        out = self.render({"Security": {
+            "has_objection": False, "severity": "none", "summary": "ok", "citations": ["tests.count"],
+            "concerns": [{"description": "Dependencies are unpinned", "citations": ["dependencies.declared"]}],
+        }})
+        self.assertIn("- **Concerns:**", out)
+        self.assertIn("  - Dependencies are unpinned — `dependencies.declared`", out)
+
+    def test_placeholder_when_persona_listed_none(self):
+        out = self.render({"Security": {"has_objection": False, "severity": "none", "summary": "ok",
+                                        "citations": [], "concerns": []}})
+        self.assertIn("**Concerns:** _none listed_", out)
+
+    def test_older_findings_without_the_field_still_render(self):
+        out = self.render({"Security": {"has_objection": False, "severity": "none", "summary": "ok",
+                                        "citations": []}})
+        self.assertIn("_none listed_", out)
+
+
 class TestDependencyTable(unittest.TestCase):  # spec 0002, AC-9
     def rows(self, dependencies, frameworks=None):
         out = _render_dependency_map({"dependencies": dependencies, "frameworks": frameworks or {}})
