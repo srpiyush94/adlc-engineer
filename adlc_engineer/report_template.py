@@ -122,8 +122,11 @@ def _render_constraints(evidence):
         "requirements document provided.\n"
     )
     technical_notes = []
-    if deployment.get("gaps"):
-        technical_notes.append("No containerization or CI/CD pipeline detected, limiting safe, repeatable deploys.")
+    gaps = deployment.get("gaps", [])
+    if any(g.startswith(("No Dockerfile", "No docker-compose")) for g in gaps):
+        technical_notes.append("No containerization detected, limiting safe, repeatable deploys.")
+    if any("CI/CD" in g for g in gaps):
+        technical_notes.append("No CI/CD pipeline detected, limiting automated checks and releases.")
     if evidence.get("tests", {}).get("count", 0) == 0:
         technical_notes.append("No automated tests detected, limiting safe refactoring velocity.")
     if not technical_notes:

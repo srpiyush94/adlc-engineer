@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from adlc_engineer.report_template import render_report
+from adlc_engineer.report_template import _render_constraints, render_report
 
 EVIDENCE = {
     "repo_meta": {"source": "/tmp/repo", "type": "local_path"},
@@ -211,6 +211,29 @@ class TestReportTemplateSpecification(unittest.TestCase):
         )
         self.assertIn("AC-1", report)
         self.assertIn("not_satisfied", report)
+
+
+class TestConstraintsSection(unittest.TestCase):  # spec 0002, AC-7
+    def render(self, gaps):
+        return _render_constraints({"deployment": {"gaps": gaps}, "tests": {"count": 3}})
+
+    def test_ci_present_does_not_claim_missing_ci(self):
+        out = self.render(["No Dockerfile found", "No Procfile found"])
+        self.assertIn("No containerization detected", out)
+        self.assertNotIn("CI/CD", out)
+
+    def test_container_present_does_not_claim_missing_container(self):
+        out = self.render(["No CI/CD workflow found under .github/workflows"])
+        self.assertIn("No CI/CD pipeline detected", out)
+        self.assertNotIn("containerization", out)
+
+    def test_both_missing_reports_both(self):
+        out = self.render(["No docker-compose file found", "No CI/CD workflow found under .github/workflows"])
+        self.assertIn("containerization", out)
+        self.assertIn("CI/CD", out)
+
+    def test_only_platform_file_gaps_report_no_constraint(self):
+        self.assertIn("No significant technical constraints", self.render(["No Procfile found", "No render.yaml found"]))
 
 
 if __name__ == "__main__":
