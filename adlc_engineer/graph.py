@@ -1,4 +1,4 @@
-"""ADLC Engineer graph: scan_repo -> analyze_architecture -> propose_modernization -> assemble_report."""
+"""ADLC Engineer graph: scan_repo -> analyze_architecture -> propose_modernization -> [generate_plan] -> assemble_report."""
 
 import json
 import re
@@ -8,8 +8,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
+from adlc_engineer import plan as plan_module
 from adlc_engineer import report_template, scanner
 from adlc_engineer.llm import build_llm
+from adlc_engineer.plan import PLAN_SYSTEM_PROMPT, PlanModel
 from adlc_engineer.state import ADLCState
 
 MODERNIZATION_OPTION_NAMES = [
@@ -429,12 +431,18 @@ REVIEWER_SPECS = [
 REVIEWER_NODE_NAMES = [state_key for _, state_key, _ in REVIEWER_SPECS]
 
 
+def _next_after_modernization(state: dict) -> str:
+    """Where the pipeline goes once the recommendation is final: the plan node if the
+    caller opted in, else straight to the report."""
+    return "generate_plan" if state.get("run_plan", False) else "assemble_report"
+
+
 def route_after_modernization(state: dict) -> List[str]:
     """Fan out to all five reviewers if the caller opted in, else go straight to
     assemble_report -- preserving the original 2-LLM-call default behavior."""
     if state.get("run_challenger", False):
         return list(REVIEWER_NODE_NAMES)
-    return ["assemble_report"]
+    return [_next_after_modernization(state)]
 
 
 def aggregate_reviews(reviews: dict) -> bool:
@@ -445,7 +453,11 @@ def aggregate_reviews(reviews: dict) -> bool:
 def route_after_challenger_review(state: dict) -> str:
     if state["challenger_summary"]["has_objections"]:
         return "revise_modernization"
-    return "assemble_report"
+    return _next_after_modernization(state)
+
+
+def route_after_revision(state: dict) -> str:
+    return _next_after_modernization(state)
 
 
 def build_graph():
@@ -596,6 +608,33 @@ def build_graph():
             )
         }
 
+    def generate_plan(state: ADLCState):
+        evidence = state["evidence"]
+        modernization = state["modernization"]
+        specification = state.get("specification")
+        recommended_name = modernization.get("recommended_option")
+        recommended_option = next(
+            (o for o in modernization.get("options", []) if o["name"] == recommended_name), None
+        )
+        human_content = (
+            f"EVIDENCE:\n{json.dumps(evidence, indent=2)}\n\n"
+            f"RECOMMENDED MODERNIZATION OPTION: {recommended_name}\n"
+            f"Reasoning: {recommended_option['reasoning'] if recommended_option else 'not found'}\n"
+            f"Migration roadmap: {json.dumps(modernization.get('migration_roadmap', []))}\n"
+            f"Risks: {json.dumps(modernization.get('risks', []))}"
+        )
+        if specification:
+            human_content += _format_specification_context(specification)
+        structured_llm = llm.with_structured_output(PlanModel)
+        result: PlanModel = structured_llm.invoke(
+            [SystemMessage(content=PLAN_SYSTEM_PROMPT), HumanMessage(content=human_content)]
+        )
+        criterion_ids = [ac["id"] for ac in specification["acceptance_criteria"]] if specification else []
+        warnings = plan_module.validate_plan(
+            result, evidence, recommended_name, criterion_ids, check_citations, state["repo_path"]
+        )
+        return {"plan": {**result.model_dump(), "citation_warnings": warnings}}
+
     def assemble_report(state: ADLCState):
         challenger = state.get("challenger_summary") if state.get("run_challenger") else None
         specification = state.get("specification")
@@ -606,6 +645,7 @@ def build_graph():
             repo_display_name=state["repo_display_name"],
             challenger=challenger,
             specification=specification,
+            plan=state.get("plan") if state.get("run_plan") else None,
         )
         return {"report_markdown": report_markdown}
 
@@ -618,6 +658,7 @@ def build_graph():
         graph.add_node(state_key, _build_reviewer_node(persona, focus, state_key))
     graph.add_node("synthesize_challenger_review", synthesize_challenger_review)
     graph.add_node("revise_modernization", revise_modernization)
+    graph.add_node("generate_plan", generate_plan)
     graph.add_node("assemble_report", assemble_report)
 
     graph.add_edge(START, "scan_repo")
@@ -631,15 +672,20 @@ def build_graph():
     graph.add_conditional_edges(
         "propose_modernization",
         route_after_modernization,
-        path_map=REVIEWER_NODE_NAMES + ["assemble_report"],
+        path_map=REVIEWER_NODE_NAMES + ["generate_plan", "assemble_report"],
     )
     graph.add_edge(REVIEWER_NODE_NAMES, "synthesize_challenger_review")
     graph.add_conditional_edges(
         "synthesize_challenger_review",
         route_after_challenger_review,
-        path_map=["revise_modernization", "assemble_report"],
+        path_map=["revise_modernization", "generate_plan", "assemble_report"],
     )
-    graph.add_edge("revise_modernization", "assemble_report")
+    graph.add_conditional_edges(
+        "revise_modernization",
+        route_after_revision,
+        path_map=["generate_plan", "assemble_report"],
+    )
+    graph.add_edge("generate_plan", "assemble_report")
     graph.add_edge("assemble_report", END)
 
     return graph.compile()

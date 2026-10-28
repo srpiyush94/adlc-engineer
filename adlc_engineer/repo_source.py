@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 
-def _looks_like_git_url(repo_arg: str) -> bool:
+def looks_like_git_url(repo_arg: str) -> bool:
     return (
         repo_arg.startswith("http://")
         or repo_arg.startswith("https://")
@@ -22,7 +22,7 @@ def resolve_repo(repo_arg: str):
     If repo_arg is a git URL, shallow-clones it into a temp directory that is
     removed on exit. If it's a local path, yields it directly (no cleanup).
     """
-    if _looks_like_git_url(repo_arg):
+    if looks_like_git_url(repo_arg):
         with tempfile.TemporaryDirectory(prefix="adlc-engineer-clone-") as tmp_dir:
             try:
                 subprocess.run(
