@@ -6,14 +6,17 @@ paths are always recorded relative to the scanned repo root.
 """
 
 import ast
+import io
 import json
 import os
 import re
+import tokenize
 
 EXCLUDED_DIRS = {
     ".git", ".venv", "venv", ".idea", "__pycache__", "node_modules",
     ".pytest_cache", "dist", "build", ".mypy_cache",
     "reports",  # this tool's own generated output — never treat it as source evidence
+    ".claude",  # agent worktrees are full duplicate copies of the repo; skills aren't app source
 }
 
 LANGUAGE_BY_EXT = {
@@ -41,6 +44,19 @@ DEPLOYMENT_CHECKS = [
     ("render.yaml", "render.yaml"),
 ]
 DOCKER_COMPOSE_FILENAMES = ["docker-compose.yml", "docker-compose.yaml"]
+
+# Declared package name (normalized: lowercase, "-" -> "_") -> the module it is imported as,
+# for packages whose import name differs from their distribution name.
+PACKAGE_MODULE_ALIASES = {
+    "python_dotenv": "dotenv",
+    "pyyaml": "yaml",
+    "pillow": "PIL",
+    "scikit_learn": "sklearn",
+    "beautifulsoup4": "bs4",
+    "opencv_python": "cv2",
+    "python_dateutil": "dateutil",
+    "attrs": "attr",
+}
 
 
 def _iter_files(repo_path: str):
@@ -127,7 +143,17 @@ def _detect_integrations(imports_by_file: dict):
     return integrations
 
 
-def _detect_dependencies(repo_path: str, frameworks: dict):
+def _imported_modules(imports_by_file: dict) -> set:
+    return {module for hits in imports_by_file.values() for module, _ in hits}
+
+
+def _is_imported(package: str, imported: set) -> bool:
+    normalized = package.lower().replace("-", "_")
+    candidates = {normalized, package, PACKAGE_MODULE_ALIASES.get(normalized, normalized)}
+    return bool(candidates & imported)
+
+
+def _detect_dependencies(repo_path: str, imported_modules: set):
     declared = []
     source_file = None
     requirements_path = os.path.join(repo_path, "requirements.txt")
@@ -142,10 +168,8 @@ def _detect_dependencies(repo_path: str, frameworks: dict):
                 if name:
                     declared.append(name)
 
-    normalized_declared = {name.lower().replace("-", "_") for name in declared}
     declared_but_not_directly_imported = sorted(
-        name for name in declared
-        if name.lower().replace("-", "_") not in frameworks
+        name for name in declared if not _is_imported(name, imported_modules)
     )
 
     return {
@@ -196,6 +220,19 @@ def _detect_tests(repo_path: str):
     return result
 
 
+def _todo_comment_lines(source: str) -> list:
+    """Line numbers of comments containing TODO/FIXME. Strings and docstrings are
+    ignored, so code that merely mentions the words (like this scanner) isn't counted."""
+    lines = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT and ("TODO" in token.string or "FIXME" in token.string):
+                lines.append(token.start[0])
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return []  # unparseable file: skip it entirely, other files still count
+    return lines
+
+
 def _detect_hotspots(loc_by_file: dict, py_sources: dict, trees_by_file: dict):
     largest_files = sorted(
         ({"path": path, "loc": loc} for path, loc in loc_by_file.items()),
@@ -205,9 +242,7 @@ def _detect_hotspots(loc_by_file: dict, py_sources: dict, trees_by_file: dict):
 
     todo_fixme_hits = []
     for rel_path, content in py_sources.items():
-        for lineno, line in enumerate(content.splitlines(), start=1):
-            if "TODO" in line or "FIXME" in line:
-                todo_fixme_hits.append(f"{rel_path}:{lineno}")
+        todo_fixme_hits.extend(f"{rel_path}:{lineno}" for lineno in _todo_comment_lines(content))
 
     bare_except_hits = []
     for rel_path, tree in trees_by_file.items():
@@ -301,7 +336,7 @@ def scan_repository(repo_path: str, display_name: str) -> dict:
 
     frameworks = _detect_frameworks(imports_by_file)
     integrations = _detect_integrations(imports_by_file)
-    dependencies = _detect_dependencies(repo_path, frameworks)
+    dependencies = _detect_dependencies(repo_path, _imported_modules(imports_by_file))
     deployment = _detect_deployment(repo_path)
     tests = _detect_tests(repo_path)
     hotspots = _detect_hotspots(loc_by_file, py_sources, trees_by_file)
