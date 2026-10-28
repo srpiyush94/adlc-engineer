@@ -58,10 +58,15 @@ def _render_dependency_map(evidence):
     else:
         lines.append("| Declared Dependency | Directly Imported? |")
         lines.append("|---|---|")
+        not_imported = deps.get("declared_but_not_directly_imported")
         for name in declared:
-            imported = "Yes" if name.lower().replace("-", "_") in frameworks else "No"
+            if not_imported is not None:
+                # The scanner knows about aliases (python-dotenv -> dotenv) and non-framework imports.
+                imported = "No" if name in not_imported else "Yes"
+            else:
+                imported = "Yes" if name.lower().replace("-", "_") in frameworks else "No"
             lines.append(f"| {name} | {imported} |")
-        not_imported = deps.get("declared_but_not_directly_imported", [])
+        not_imported = not_imported or []
         if not_imported:
             lines.append("")
             lines.append(
