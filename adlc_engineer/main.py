@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from adlc_engineer import repo_source  # noqa: E402  (must load env first)
+from adlc_engineer import adr_writer, repo_source  # noqa: E402  (must load env first)
 from adlc_engineer.graph import build_graph
 from adlc_engineer.llm import get_langfuse_handler
 
@@ -40,6 +40,20 @@ def main():
              "option against them. Adds 1 more LLM call. Empty by default -- pipeline behaves exactly as "
              "before.",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        default=False,
+        help="Generate an ordered, evidence-linked implementation plan (5-10 PR-sized tasks with "
+             "acceptance checks and dependencies) for the recommended option. Adds 1 more LLM call.",
+    )
+    parser.add_argument(
+        "--write-adr",
+        action="store_true",
+        default=False,
+        help="Save the generated ADR as a new numbered file (status Proposed) under <repo>/docs/adr/. "
+             "Local paths only; ignored with a warning for git URLs. Never overwrites existing ADRs.",
+    )
     args = parser.parse_args()
 
     handler = get_langfuse_handler()
@@ -58,9 +72,17 @@ def main():
                 "repo_display_name": display_name,
                 "run_challenger": args.challenge,
                 "requirement_text": args.requirement,
+                "run_plan": args.plan,
             },
             config=config,
         )
+
+    if args.write_adr:
+        if repo_source.looks_like_git_url(args.repo):
+            print("WARNING: --write-adr ignored: the repo is a temporary git clone, so the file would be discarded.")
+        else:
+            adr_path = adr_writer.write_adr(repo_path, result["modernization"])
+            print(f"ADR written to: {adr_path} (status: Proposed)")
 
     output_path = Path(args.output)
     os.makedirs(output_path.parent, exist_ok=True)
@@ -89,6 +111,12 @@ def main():
             )
         else:
             print("Architecture Challenger: no objections raised; original recommendation stands.")
+
+    plan = result.get("plan")
+    if args.plan and plan:
+        print(
+            f"Plan: {len(plan['tasks'])} task(s) generated, {len(plan.get('citation_warnings', []))} warning(s)."
+        )
 
     specification = result.get("specification")
     if args.requirement and specification:

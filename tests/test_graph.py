@@ -13,6 +13,7 @@ from adlc_engineer.graph import (
     check_citations,
     route_after_challenger_review,
     route_after_modernization,
+    route_after_revision,
     route_after_scan,
 )
 
@@ -150,6 +151,29 @@ class TestSpecificationCitationSentinel(unittest.TestCase):
             "requirement_text": "Must support 10k RPS",
         }
         self.assertEqual(check_citations(["requirement_text"], spec_evidence, "/tmp/repo"), [])
+
+
+class TestPlanRouting(unittest.TestCase):
+    def test_goes_to_plan_when_opted_in_without_challenger(self):
+        self.assertEqual(route_after_modernization({"run_plan": True}), ["generate_plan"])
+
+    def test_challenger_still_takes_priority_over_plan(self):
+        self.assertEqual(
+            sorted(route_after_modernization({"run_challenger": True, "run_plan": True})),
+            sorted(REVIEWER_NODE_NAMES),
+        )
+
+    def test_no_objections_goes_to_plan_when_opted_in(self):
+        state = {"challenger_summary": {"has_objections": False}, "run_plan": True}
+        self.assertEqual(route_after_challenger_review(state), "generate_plan")
+
+    def test_objections_still_revise_first(self):
+        state = {"challenger_summary": {"has_objections": True}, "run_plan": True}
+        self.assertEqual(route_after_challenger_review(state), "revise_modernization")
+
+    def test_revision_routes_to_plan_or_report(self):
+        self.assertEqual(route_after_revision({"run_plan": True}), "generate_plan")
+        self.assertEqual(route_after_revision({}), "assemble_report")
 
 
 if __name__ == "__main__":
