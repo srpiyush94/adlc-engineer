@@ -1,8 +1,13 @@
-langgraph
-langchain-google-genai
-langchain-core
-langchain
-langfuse
-python-dotenv
-streamlit
-streamlit-mermaid
+# Direct dependencies, pinned to the versions the test suite and dashboard run on
+# (Python 3.13 locally and in CI; the versions also resolve for 3.14, which Streamlit
+# Cloud uses). Transitive dependencies are left to pip. To upgrade, change a pin, run
+# the tests, and check the dashboard.
+langgraph==1.2.18
+langchain-google-genai==4.4.2
+langchain-core==1.7.0
+langchain==1.4.7
+langfuse==5.0.4
+python-dotenv==1.2.4
+streamlit==1.66.1
+# 0.3.0 pins altair<5 and setuptools<76, which can clash with a current Streamlit.
+streamlit-mermaid==0.2.0
