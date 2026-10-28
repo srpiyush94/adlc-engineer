@@ -55,7 +55,9 @@ the task helps satisfy; otherwise leave `criteria_refs` empty.
 
 def find_cycle(tasks: List[PlanTask]) -> List[str]:
     """Return the ids of one dependency cycle among known task ids, or [] if acyclic."""
-    deps = {t.id: [d for d in t.depends_on if d in {x.id for x in tasks}] for t in tasks}
+    known = {t.id for t in tasks}
+    # Self-edges are reported separately by validate_plan, so skip them here.
+    deps = {t.id: [d for d in t.depends_on if d in known and d != t.id] for t in tasks}
     WHITE, GREY, BLACK = 0, 1, 2
     color = {task_id: WHITE for task_id in deps}
     stack: List[str] = []
@@ -89,7 +91,7 @@ def flagged_gap_paths(evidence: dict) -> List[str]:
         gaps.append("deployment.gaps")
     if evidence.get("tests", {}).get("gap"):
         gaps.append("tests.gap")
-    if evidence.get("dependencies", {}).get("source_file") is None:
+    if "dependencies" in evidence and evidence["dependencies"].get("source_file") is None:
         gaps.append("dependencies.source_file")
     return gaps
 
@@ -139,10 +141,12 @@ def validate_plan(
 
     if recommended_option in MONOLITH_OPTIONS:
         for task in plan.tasks:
-            title = task.title.lower()
-            if any(term in title for term in DECOMPOSITION_TERMS):
+            # Title and acceptance check state what the task does; the rationale is
+            # excluded because it may legitimately say "rather than microservices".
+            action = f"{task.title} {task.acceptance_check}".lower()
+            if any(term in action for term in DECOMPOSITION_TERMS):
                 warnings.append(
-                    f"{task.id}: decomposition task {task.title!r} is inconsistent with the "
+                    f"{task.id}: decomposition work in {task.title!r} is inconsistent with the "
                     f"recommended option {recommended_option!r}."
                 )
     return warnings

@@ -51,8 +51,8 @@ class TestFindCycle(unittest.TestCase):
         self.assertEqual(cycle[0], cycle[-1])
         self.assertEqual(set(cycle), {"T-1", "T-2"})
 
-    def test_self_loop(self):
-        self.assertTrue(find_cycle([task("T-1", ["T-1"])]))
+    def test_self_edge_is_not_reported_as_a_cycle(self):
+        self.assertEqual(find_cycle([task("T-1", ["T-1"])]), [])
 
     def test_unknown_dependency_is_not_a_cycle(self):
         self.assertEqual(find_cycle([task("T-1", ["T-9"])]), [])
@@ -61,6 +61,9 @@ class TestFindCycle(unittest.TestCase):
 class TestFlaggedGaps(unittest.TestCase):
     def test_all_three_flagged(self):
         self.assertEqual(flagged_gap_paths(EVIDENCE), ["deployment.gaps", "tests.gap", "dependencies.source_file"])
+
+    def test_missing_dependencies_key_is_not_a_gap(self):
+        self.assertEqual(flagged_gap_paths({}), [])
 
     def test_clean_repo_flags_nothing(self):
         clean = {"deployment": {"gaps": []}, "tests": {"gap": None}, "dependencies": {"source_file": "requirements.txt"}}
@@ -79,6 +82,18 @@ class TestValidatePlan(unittest.TestCase):
         warnings = validate(plan)
         self.assertTrue(any("unknown task 'T-9'" in w for w in warnings))
         self.assertTrue(any("Dependency cycle" in w for w in warnings))
+
+    def test_self_dependency_warns_exactly_once(self):
+        plan = full_plan(tasks=[task("T-1", ["T-1"])] + full_plan().tasks[1:])
+        self_warnings = [w for w in validate(plan) if "T-1" in w and ("itself" in w or "cycle" in w)]
+        self.assertEqual(self_warnings, ["T-1: depends on itself."])
+
+    def test_decomposition_in_acceptance_check_rejected_but_rationale_allowed(self):
+        sneaky = task("T-4", title="Extract billing service", acceptance_check="strangler proxy routes traffic")
+        self.assertTrue(any("T-4" in w and "inconsistent" in w for w in validate(full_plan(tasks=full_plan().tasks + [sneaky]))))
+        reasoned = task("T-4", title="Add health endpoint")
+        reasoned.rationale = "Simple, rather than microservices."
+        self.assertFalse(any("inconsistent" in w for w in validate(full_plan(tasks=full_plan().tasks + [reasoned]))))
 
     def test_duplicate_ids(self):
         warnings = validate(full_plan(tasks=[task("T-1"), task("T-1")]))
@@ -127,6 +142,12 @@ class TestRenderPlan(unittest.TestCase):
         out = _render_plan({"tasks": [t.model_dump() for t in tasks], "not_addressed": []}, 16)
         self.assertIn("Criteria", out)
         self.assertIn("AC-1", out)
+
+    def test_pipe_in_id_and_dependencies_is_escaped(self):
+        t = task("T|1", ["a|b"])
+        row = _render_plan({"tasks": [t.model_dump()], "not_addressed": []}, 16).split("\n")[4]
+        self.assertEqual(row.count("|") - row.count("\\|"), 8)  # 7 columns -> 8 real separators
+        self.assertIn("T\\|1", row)
 
     def test_pipe_in_text_is_escaped(self):
         t = task("T-1", acceptance_check="a | b")
