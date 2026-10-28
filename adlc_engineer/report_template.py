@@ -321,6 +321,49 @@ def _render_specification(specification: dict, modernization: dict, section_numb
     return "\n".join(lines) + "\n"
 
 
+def _cell(text) -> str:
+    return str(text).replace("|", "\\|").replace("\n", " ")
+
+
+def _render_plan(plan: dict, section_number: int) -> str:
+    lines = [f"## {section_number}. Implementation Plan\n"]
+    tasks = plan.get("tasks", [])
+    if not tasks:
+        lines.append("_No tasks generated._\n")
+    else:
+        has_criteria = any(t.get("criteria_refs") for t in tasks)
+        header = "| ID | Task | Closes gap | Acceptance check | Depends on | Effort |"
+        divider = "|---|---|---|---|---|---|"
+        if has_criteria:
+            header += " Criteria |"
+            divider += "---|"
+        header += " Citations |"
+        divider += "---|"
+        lines.extend([header, divider])
+        for t in tasks:
+            row = (
+                f"| {t['id']} | **{_cell(t['title'])}** — {_cell(t['rationale'])} | `{_cell(t['gap_ref'])}` | "
+                f"{_cell(t['acceptance_check'])} | {', '.join(t['depends_on']) or '—'} | {t['effort']} |"
+            )
+            if has_criteria:
+                row += f" {', '.join(t.get('criteria_refs', [])) or '—'} |"
+            row += f" {_fmt_citations(t.get('citations', []))} |"
+            lines.append(row)
+        lines.append("")
+
+    if plan.get("not_addressed"):
+        lines.append("**Deliberately not addressed:**")
+        for note in plan["not_addressed"]:
+            lines.append(f"- {note}")
+        lines.append("")
+
+    if plan.get("citation_warnings"):
+        lines.append("**Plan warnings:**")
+        for w in plan["citation_warnings"]:
+            lines.append(f"- {w}")
+    return "\n".join(lines) + "\n"
+
+
 def _render_appendix(evidence):
     return "## Appendix A: Evidence Data\n\n```json\n" + json.dumps(evidence, indent=2) + "\n```\n"
 
@@ -332,6 +375,7 @@ def render_report(
     repo_display_name: str,
     challenger: dict = None,
     specification: dict = None,
+    plan: dict = None,
 ) -> str:
     sections = [
         f"# ADLC Engineer — Architecture & Modernization Report\n\n**Repository:** {repo_display_name}\n",
@@ -357,6 +401,8 @@ def render_report(
         optional_sections.append((_render_specification, (specification, modernization)))
     if challenger is not None:
         optional_sections.append((_render_challenger_review, (challenger, modernization)))
+    if plan is not None:
+        optional_sections.append((_render_plan, (plan,)))
 
     next_number = 16
     for render_fn, args in optional_sections:

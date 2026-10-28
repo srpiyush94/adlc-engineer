@@ -23,3 +23,7 @@ class ADLCState(TypedDict):
     # --- Spec-Driven Development (opt-in) ---
     requirement_text: str
     specification: dict
+
+    # --- Implementation plan (opt-in) ---
+    run_plan: bool
+    plan: dict
