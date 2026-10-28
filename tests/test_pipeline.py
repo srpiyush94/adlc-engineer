@@ -14,6 +14,7 @@ from adlc_engineer.graph import (
     ComponentCitation,
     ModernizationModel,
     ModernizationOption,
+    ReviewConcern,
     ReviewFinding,
     build_graph,
 )
@@ -77,6 +78,7 @@ class FakeLLM:
                 return ReviewFinding(
                     has_objection=self.objecting, severity="high" if self.objecting else "none",
                     summary="s", citations=["languages.Python"],
+                    concerns=[ReviewConcern(description="Dependencies are unpinned", citations=["dependencies"])],
                 )
             raise AssertionError(f"unexpected model {model}")
 
@@ -116,6 +118,14 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(calls[-2:], ["ModernizationModel", "PlanModel"])
         self.assertEqual(len(calls), 9)
         self.assertTrue(result["modernization"]["revised"])
+
+    def test_concerns_reach_the_report_without_forcing_a_revision(self):  # AC-3, AC-6
+        result, calls = run(run_challenger=True)  # every reviewer: no objection, one concern
+        self.assertEqual(len(calls), 7)  # 2 base + 5 reviewers, no revision call
+        self.assertFalse(result["challenger_summary"]["has_objections"])
+        for persona in ("Security", "Scalability", "Cost", "Reliability", "Implementation"):
+            self.assertEqual(len(result["challenger_summary"]["reviews"][persona]["concerns"]), 1)
+        self.assertEqual(result["report_markdown"].count("Dependencies are unpinned"), 5)
 
     def test_challenger_without_plan_has_no_plan_node(self):
         result, calls = run(run_challenger=True)

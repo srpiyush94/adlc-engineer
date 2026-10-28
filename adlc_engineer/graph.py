@@ -85,11 +85,17 @@ class ModernizationModel(BaseModel):
     compliance_assessment: Optional[List[ComplianceAssessment]] = None  # only when a specification exists
 
 
+class ReviewConcern(BaseModel):
+    description: str
+    citations: List[str]
+
+
 class ReviewFinding(BaseModel):
     has_objection: bool
     severity: Literal["none", "low", "medium", "high"]
     summary: str
     citations: List[str]
+    concerns: List[ReviewConcern]
 
 
 ARCHITECTURE_SYSTEM_PROMPT = """You are an Architecture Analyst. You will be given EVIDENCE gathered by a \
@@ -175,6 +181,12 @@ satisfies your concern). Never leave `citations` empty.
 honestly to how material the concern is -- do not inflate severity for effect.
 - `summary` must be 2-4 sentences specific to this repository's actual evidence, not generic advice that \
 could apply to any codebase.
+- `concerns` must contain at least one item in every case, including when `has_objection` is false. A \
+concern is a residual risk, caveat, or follow-up the recommendation does not fully address from your \
+{persona} lens. It is below the bar for an objection (it would not change the recommendation) but is worth \
+tracking. Each concern must be specific to this repository and carry its own non-empty `citations` to \
+evidence that backs it. Report the real weakest point you can find in the evidence; do not invent a concern \
+the evidence does not support, and do not repeat your `summary`.
 """
 
 REVIEWER_PERSONAS = {
@@ -346,6 +358,18 @@ def check_citations(citations: List[str], evidence: dict, repo_path: str) -> Lis
         if os.path.exists(file_candidate):
             continue
         warnings.append(f"Unresolved citation: {citation!r}")
+    return warnings
+
+
+def check_review_finding(finding: ReviewFinding, persona: str, evidence: dict, repo_path: str) -> List[str]:
+    """Warnings for a reviewer finding: unresolved citations, and a missing concern list.
+    Never raises -- a thin finding is reported in the output, not fatal."""
+    warnings = check_citations(finding.citations, evidence, repo_path)
+    if not finding.concerns:
+        warnings.append(f"The {persona} reviewer listed no concerns.")
+    for concern in finding.concerns:
+        warnings.extend(f"Concern {concern.description[:60]!r}: {w}"
+                        for w in check_citations(concern.citations, evidence, repo_path))
     return warnings
 
 
@@ -557,7 +581,7 @@ def build_graph():
             ]
             structured_llm = llm.with_structured_output(ReviewFinding)
             result: ReviewFinding = structured_llm.invoke(messages)
-            warnings = check_citations(result.citations, evidence, state["repo_path"])
+            warnings = check_review_finding(result, persona, evidence, state["repo_path"])
             return {state_key: {"persona": persona, **result.model_dump(), "citation_warnings": warnings}}
 
         return reviewer_node

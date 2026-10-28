@@ -7,10 +7,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from adlc_engineer.graph import (
     _NOT_FOUND,
     REVIEWER_NODE_NAMES,
+    ReviewConcern,
+    ReviewFinding,
+    _build_reviewer_system_prompt,
     _resolve_dot_path,
     _sanitize_mermaid,
     aggregate_reviews,
     check_citations,
+    check_review_finding,
     route_after_challenger_review,
     route_after_modernization,
     route_after_revision,
@@ -151,6 +155,48 @@ class TestSpecificationCitationSentinel(unittest.TestCase):
             "requirement_text": "Must support 10k RPS",
         }
         self.assertEqual(check_citations(["requirement_text"], spec_evidence, "/tmp/repo"), [])
+
+
+class TestChallengerConcerns(unittest.TestCase):  # spec 0003
+    EVIDENCE = {"dependencies": {"declared": []}, "tests": {"count": 0}}
+
+    def finding(self, concerns, has_objection=False):
+        return ReviewFinding(
+            has_objection=has_objection, severity="high" if has_objection else "none",
+            summary="s", citations=["tests.count"], concerns=concerns,
+        )
+
+    def test_prompt_requires_concern_without_objection_and_keeps_no_manufacture_rule(self):  # AC-2
+        prompt = _build_reviewer_system_prompt("Security", "focus")
+        self.assertIn("at least one item in every case, including when `has_objection` is false", prompt)
+        self.assertIn("below the bar for an objection", prompt)
+        self.assertIn("its own non-empty `citations`", prompt)
+        self.assertIn("Do NOT manufacture an objection", prompt)
+        self.assertIn("Security lens", prompt)  # persona is substituted into the new rule
+
+    def test_valid_concern_has_no_warnings(self):  # AC-1
+        concern = ReviewConcern(description="No tests", citations=["tests.count"])
+        self.assertEqual(check_review_finding(self.finding([concern]), "Cost", self.EVIDENCE, "/x"), [])
+
+    def test_no_concerns_warns_but_does_not_raise(self):  # AC-4
+        warnings = check_review_finding(self.finding([]), "Cost", self.EVIDENCE, "/x")
+        self.assertEqual(warnings, ["The Cost reviewer listed no concerns."])
+
+    def test_unresolved_concern_citation_warns(self):  # AC-5
+        concern = ReviewConcern(description="Made up", citations=["no.such.path"])
+        warnings = check_review_finding(self.finding([concern]), "Cost", self.EVIDENCE, "/x")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Made up", warnings[0])
+        self.assertIn("no.such.path", warnings[0])
+
+    def test_concern_without_citations_warns(self):  # AC-5
+        concern = ReviewConcern(description="Unsupported", citations=[])
+        self.assertEqual(len(check_review_finding(self.finding([concern]), "Cost", self.EVIDENCE, "/x")), 1)
+
+    def test_concerns_do_not_count_as_objections(self):  # AC-3
+        concern = ReviewConcern(description="Real risk", citations=["tests.count"])
+        reviews = {"Security": self.finding([concern]).model_dump(), "Cost": self.finding([concern]).model_dump()}
+        self.assertFalse(aggregate_reviews(reviews))
 
 
 class TestPlanRouting(unittest.TestCase):
