@@ -115,3 +115,66 @@ class TestScanOnly(unittest.TestCase):  # spec 0004, AC-12
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFailOn(unittest.TestCase):  # spec 0005
+    def invoke(self, repo, *extra, scan_only=True):
+        argv = ["main", "--repo", repo, "--output", os.path.join(repo, "..", "out-" + os.path.basename(repo) + ".md")]
+        argv += (["--scan-only"] if scan_only else []) + list(extra)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            try:
+                main_module.main()
+                code = 0
+            except SystemExit as exit_:
+                code = exit_.code
+        return code, out.getvalue(), err.getvalue(), argv[4]
+
+    def write(self, root, name, text):
+        with open(os.path.join(root, name), "w") as f:
+            f.write(text)
+
+    def test_exits_1_naming_failing_categories_and_still_writes_report(self):  # AC-1, AC-4, AC-8
+        with tempfile.TemporaryDirectory() as repo:
+            self.write(repo, "requirements.txt", "bare\n")
+            self.write(repo, "app.py", "import os\n")
+            code, out, _, report = self.invoke(repo, "--fail-on", " unused-imports , unpinned,unpinned")
+            self.assertTrue(os.path.exists(report))
+            os.remove(report)
+        self.assertEqual(code, 1)
+        self.assertIn("FAILED (--fail-on): unpinned: 1, unused-imports: 1", out)
+
+    def test_unselected_findings_do_not_fail(self):  # AC-5
+        with tempfile.TemporaryDirectory() as repo:
+            self.write(repo, "requirements.txt", "bare\n")
+            code, _, _, report = self.invoke(repo, "--fail-on", "secrets")
+            os.remove(report)
+        self.assertEqual(code, 0)
+
+    def test_clean_repo_passes(self):  # AC-6
+        with tempfile.TemporaryDirectory() as repo:
+            self.write(repo, "requirements.txt", "pinned==1.0\n")
+            code, _, _, report = self.invoke(repo, "--fail-on", "secrets,unpinned,complexity")
+            os.remove(report)
+        self.assertEqual(code, 0)
+
+    def test_without_fail_on_findings_still_exit_0(self):  # AC-7
+        with tempfile.TemporaryDirectory() as repo:
+            self.write(repo, "requirements.txt", "bare\n")
+            code, _, _, report = self.invoke(repo)
+            os.remove(report)
+        self.assertEqual(code, 0)
+
+    def test_unknown_category_is_a_usage_error(self):  # AC-2
+        with tempfile.TemporaryDirectory() as repo:
+            code, _, err, _ = self.invoke(repo, "--fail-on", "secrets,nonsense")
+        self.assertEqual(code, 2)
+        self.assertIn("nonsense", err)
+        self.assertIn("unused-imports", err)
+
+    def test_fail_on_requires_scan_only(self):  # AC-3
+        with tempfile.TemporaryDirectory() as repo:
+            code, _, err, _ = self.invoke(repo, "--fail-on", "secrets", scan_only=False)
+        self.assertEqual(code, 2)
+        self.assertIn("--scan-only", err)

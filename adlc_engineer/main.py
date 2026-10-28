@@ -5,13 +5,14 @@ Run as: python -m adlc_engineer.main [--repo <path-or-url>] [--output <path>]
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from adlc_engineer import adr_writer, report_template, repo_source, scanner  # noqa: E402  (must load env first)
+from adlc_engineer import adr_writer, checks, report_template, repo_source, scanner  # noqa: E402  (must load env first)
 from adlc_engineer.graph import build_graph
 from adlc_engineer.llm import get_langfuse_handler
 
@@ -34,6 +35,21 @@ def _scan_only(args):
     print(f"Functions at or above complexity {evidence['complexity']['threshold']}: {evidence['complexity']['count']}")
     print(f"Source modules not imported by any test: {evidence['untested_modules']['count']}")
     print(f"Unused imports: {evidence['unused_imports']['count']}")
+
+    failing = checks.failing_categories(evidence, args.fail_on)
+    if failing:
+        print("\nFAILED (--fail-on): " + ", ".join(f"{name}: {count}" for name, count in failing.items()))
+        sys.exit(1)
+
+
+def _categories(value: str) -> list:
+    names = [part.strip() for part in value.split(",") if part.strip()]
+    unknown = [n for n in names if n not in checks.CATEGORIES]
+    if unknown or not names:
+        raise argparse.ArgumentTypeError(
+            f"unknown categor{'ies' if len(unknown) != 1 else 'y'} {', '.join(unknown) or repr(value)}; "
+            f"choose from {', '.join(checks.CATEGORIES)}")
+    return names
 
 
 def main():
@@ -80,8 +96,18 @@ def main():
              "and sends nothing off this machine. Cannot be combined with --plan, --challenge, "
              "--requirement or --write-adr.",
     )
+    parser.add_argument(
+        "--fail-on",
+        type=_categories,
+        default=[],
+        metavar="CATEGORIES",
+        help="With --scan-only: exit 1 if any listed category has findings, so CI can gate a pull request. "
+             f"Comma-separated from: {', '.join(checks.CATEGORIES)}. The report is written either way.",
+    )
     args = parser.parse_args()
 
+    if args.fail_on and not args.scan_only:
+        parser.error("--fail-on needs --scan-only")
     if args.scan_only:
         incompatible = [flag for flag, on in (
             ("--plan", args.plan), ("--challenge", args.challenge),
