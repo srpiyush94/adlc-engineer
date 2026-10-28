@@ -9,8 +9,9 @@ import ast
 import io
 import json
 import os
-import re
 import tokenize
+
+from adlc_engineer import checks
 
 EXCLUDED_DIRS = {
     ".git", ".venv", "venv", ".idea", "__pycache__", "node_modules",
@@ -155,18 +156,20 @@ def _is_imported(package: str, imported: set) -> bool:
 
 def _detect_dependencies(repo_path: str, imported_modules: set):
     declared = []
+    unpinned = []
     source_file = None
     requirements_path = os.path.join(repo_path, "requirements.txt")
     if os.path.isfile(requirements_path):
         source_file = "requirements.txt"
         with open(requirements_path, "r", encoding="utf-8") as f:
             for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
+                if not checks.is_requirement_line(line):
                     continue
-                name = re.split(r"[<>=!~\[]", line)[0].strip()
+                name = checks.requirement_name(line)
                 if name:
                     declared.append(name)
+                    if not checks.is_pinned(line):
+                        unpinned.append(name)
 
     declared_but_not_directly_imported = sorted(
         name for name in declared if not _is_imported(name, imported_modules)
@@ -176,6 +179,8 @@ def _detect_dependencies(repo_path: str, imported_modules: set):
         "declared": declared,
         "source_file": source_file,
         "declared_but_not_directly_imported": declared_but_not_directly_imported,
+        "unpinned": sorted(unpinned),
+        "has_lockfile": checks.has_lockfile(repo_path),
     }
 
 
@@ -197,7 +202,10 @@ def _detect_deployment(repo_path: str):
         gaps.append("No docker-compose file found")
 
     workflows_dir = os.path.join(repo_path, ".github", "workflows")
-    has_workflows = os.path.isdir(workflows_dir) and any(os.scandir(workflows_dir))
+    has_workflows = False
+    if os.path.isdir(workflows_dir):
+        with os.scandir(workflows_dir) as entries:
+            has_workflows = any(True for _ in entries)
     found[".github/workflows"] = has_workflows
     if not has_workflows:
         gaps.append("No CI/CD workflow found under .github/workflows")
@@ -341,6 +349,10 @@ def scan_repository(repo_path: str, display_name: str) -> dict:
     tests = _detect_tests(repo_path)
     hotspots = _detect_hotspots(loc_by_file, py_sources, trees_by_file)
     coupling = _detect_coupling(trees_by_file, py_sources, repo_path)
+    secrets = checks.find_secrets(_iter_files(repo_path), _read_text, checks.tracked_files(repo_path), EXCLUDED_DIRS)
+    complexity = checks.find_complex_functions(trees_by_file)
+    untested_modules = checks.find_untested_modules(trees_by_file)
+    unused_imports = checks.find_all_unused_imports(trees_by_file, py_sources)
     architecture_pattern_guess = _detect_architecture_pattern(frameworks, py_sources)
 
     evidence = {
@@ -356,6 +368,10 @@ def scan_repository(repo_path: str, display_name: str) -> dict:
         "tests": tests,
         "hotspots": hotspots,
         "coupling": coupling,
+        "secrets": secrets,
+        "complexity": complexity,
+        "untested_modules": untested_modules,
+        "unused_imports": unused_imports,
         "architecture_pattern_guess": architecture_pattern_guess,
         "parse_errors": parse_errors,
     }

@@ -11,12 +11,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from adlc_engineer import adr_writer, repo_source  # noqa: E402  (must load env first)
+from adlc_engineer import adr_writer, report_template, repo_source, scanner  # noqa: E402  (must load env first)
 from adlc_engineer.graph import build_graph
 from adlc_engineer.llm import get_langfuse_handler
 
 DEFAULT_REPO = str(Path(__file__).resolve().parent.parent)
 DEFAULT_OUTPUT = str(Path(__file__).resolve().parent / "reports" / "architecture_report.md")
+
+
+def _scan_only(args):
+    with repo_source.resolve_repo(args.repo) as (repo_path, display_name):
+        print(f"Scanning repository (no LLM): {display_name}")
+        evidence = scanner.scan_repository(repo_path, display_name)
+
+    output_path = Path(args.output)
+    os.makedirs(output_path.parent, exist_ok=True)
+    output_path.write_text(report_template.render_scan_report(evidence, display_name), encoding="utf-8")
+
+    print(f"\nReport written to: {output_path}")
+    print(f"Unpinned dependencies: {len(evidence['dependencies']['unpinned'])}")
+    print(f"Potential secrets: {evidence['secrets']['count']}")
+    print(f"Functions at or above complexity {evidence['complexity']['threshold']}: {evidence['complexity']['count']}")
+    print(f"Source modules not imported by any test: {evidence['untested_modules']['count']}")
+    print(f"Unused imports: {evidence['unused_imports']['count']}")
 
 
 def main():
@@ -54,7 +71,26 @@ def main():
         help="Save the generated ADR as a new numbered file (status Proposed) under <repo>/docs/adr/. "
              "Local paths only; ignored with a warning for git URLs. Never overwrites existing ADRs.",
     )
+    parser.add_argument(
+        "--scan-only",
+        action="store_true",
+        default=False,
+        help="Run only the deterministic scanner and write a report of its findings (unpinned dependencies, "
+             "secrets, complexity, untested modules, unused imports). Makes no LLM call, needs no API key, "
+             "and sends nothing off this machine. Cannot be combined with --plan, --challenge, "
+             "--requirement or --write-adr.",
+    )
     args = parser.parse_args()
+
+    if args.scan_only:
+        incompatible = [flag for flag, on in (
+            ("--plan", args.plan), ("--challenge", args.challenge),
+            ("--requirement", bool(args.requirement)), ("--write-adr", args.write_adr),
+        ) if on]
+        if incompatible:
+            parser.error(f"--scan-only makes no LLM call, so it cannot be combined with {', '.join(incompatible)}")
+        _scan_only(args)
+        return
 
     write_adr = args.write_adr
     if write_adr and repo_source.looks_like_git_url(args.repo):

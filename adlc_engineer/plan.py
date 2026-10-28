@@ -44,7 +44,8 @@ a workflow that goes green) -- never "improve" or "ensure quality".
 - `depends_on` lists the ids of tasks that must finish first. It may be empty. It must reference only ids \
 that exist in your output and must not form a cycle.
 - `effort` is S (hours), M (a day or two) or L (several days).
-- Every gap flagged in the evidence (deployment gaps, test gap, missing dependency manifest) must be covered \
+- Every gap flagged in the evidence (deployment gaps, test gap, missing dependency manifest, unpinned \
+dependencies in `dependencies.unpinned`, committed credentials in `secrets`) must be covered \
 by at least one task, or listed in `not_addressed` with the reason it is deliberately left out.
 - Stay consistent with the recommended option: do not propose decomposition work (microservices, \
 event-driven, strangler) under a monolith recommendation.
@@ -93,6 +94,10 @@ def flagged_gap_paths(evidence: dict) -> List[str]:
         gaps.append("tests.gap")
     if "dependencies" in evidence and evidence["dependencies"].get("source_file") is None:
         gaps.append("dependencies.source_file")
+    if evidence.get("dependencies", {}).get("unpinned"):
+        gaps.append("dependencies.unpinned")
+    if evidence.get("secrets", {}).get("count"):
+        gaps.append("secrets")
     return gaps
 
 

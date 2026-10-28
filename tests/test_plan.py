@@ -70,6 +70,38 @@ class TestFlaggedGaps(unittest.TestCase):
         self.assertEqual(flagged_gap_paths(clean), [])
 
 
+class TestNewDeterministicGaps(unittest.TestCase):  # spec 0004, AC-13
+    CLEAN = {"deployment": {"gaps": []}, "tests": {"gap": None},
+             "dependencies": {"source_file": "requirements.txt", "unpinned": []}, "secrets": {"count": 0}}
+
+    def test_clean_repo_flags_nothing(self):
+        self.assertEqual(flagged_gap_paths(self.CLEAN), [])
+
+    def test_unpinned_and_secrets_are_flagged(self):
+        evidence = {**self.CLEAN, "dependencies": {"source_file": "requirements.txt", "unpinned": ["bare"]},
+                    "secrets": {"count": 2}}
+        self.assertEqual(flagged_gap_paths(evidence), ["dependencies.unpinned", "secrets"])
+
+    def test_plan_must_cover_them_or_say_why_not(self):
+        evidence = {**EVIDENCE, "dependencies": {"source_file": "requirements.txt", "unpinned": ["bare"]},
+                    "secrets": {"count": 1}}
+        covering = full_plan(tasks=[
+            task("T-1", gap_ref="dependencies.unpinned", citations=["dependencies.unpinned"]),
+            task("T-2", gap_ref="secrets", citations=["secrets"]),
+            task("T-3", gap_ref="tests.gap"),
+            task("T-4", gap_ref="deployment.gaps", citations=["deployment.gaps"]),
+        ])
+
+        def check(plan):
+            return validate_plan(plan, evidence, "Modernize monolith", [], check_citations, "/x")
+
+        self.assertEqual(check(covering), [])
+        uncovered = check(full_plan(tasks=[task("T-1", gap_ref="tests.gap"),
+                                           task("T-2", gap_ref="deployment.gaps", citations=["deployment.gaps"])]))
+        self.assertTrue(any("'dependencies.unpinned'" in w for w in uncovered))
+        self.assertTrue(any("'secrets'" in w for w in uncovered))
+
+
 class TestValidatePlan(unittest.TestCase):
     def test_valid_plan_has_no_warnings(self):
         self.assertEqual(validate(full_plan()), [])
