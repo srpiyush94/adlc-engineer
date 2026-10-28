@@ -68,5 +68,50 @@ class TestWriteAdrFlag(unittest.TestCase):
         self.assertIn("no index table", out.getvalue())
 
 
+class TestScanOnly(unittest.TestCase):  # spec 0004, AC-12
+    def run_scan_only(self, repo, output):
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", ["main", "--repo", repo, "--scan-only", "--output", output]), \
+                mock.patch.object(main_module, "build_graph", side_effect=AssertionError("LLM graph built")), \
+                mock.patch.object(main_module, "get_langfuse_handler", side_effect=AssertionError("tracing used")), \
+                mock.patch("adlc_engineer.llm.build_llm", side_effect=AssertionError("LLM built")), \
+                mock.patch.dict(os.environ, {}, clear=False), \
+                contextlib.redirect_stdout(out):
+            os.environ.pop("GOOGLE_API_KEY", None)
+            main_module.main()
+        return out.getvalue()
+
+    def make_repo(self, root):
+        with open(os.path.join(root, "requirements.txt"), "w") as f:
+            f.write("bare\n")
+        with open(os.path.join(root, "app.py"), "w") as f:
+            f.write("import os\n")
+
+    def test_writes_report_without_llm_or_api_key_and_is_repeatable(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as out_dir:
+            self.make_repo(repo)
+            first, second = os.path.join(out_dir, "a.md"), os.path.join(out_dir, "b.md")
+            stdout = self.run_scan_only(repo, first)
+            self.run_scan_only(repo, second)
+            with open(first, encoding="utf-8") as f1, open(second, encoding="utf-8") as f2:
+                report, again = f1.read(), f2.read()
+        self.assertEqual(report, again)
+        self.assertIn("No LLM was used", report)
+        self.assertIn("`bare`", report)
+        self.assertIn("Unpinned dependencies: 1", stdout)
+        self.assertIn("Unused imports: 1", stdout)
+
+    def test_rejects_flags_that_need_an_llm(self):
+        for extra in (["--plan"], ["--challenge"], ["--write-adr"], ["--requirement", "10k rps"]):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as repo:
+                err = io.StringIO()
+                with mock.patch.object(sys, "argv", ["main", "--repo", repo, "--scan-only", *extra]), \
+                        contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+                    main_module.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("cannot be combined with", err.getvalue())
+                self.assertIn(extra[0], err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -48,11 +48,11 @@ def _render_system_components(architecture_model):
     return "\n".join(lines) + "\n"
 
 
-def _render_dependency_map(evidence):
+def _render_dependency_map(evidence, number=4):
     deps = evidence.get("dependencies", {})
     declared = deps.get("declared", [])
     frameworks = evidence.get("frameworks", {})
-    lines = ["## 4. Dependency Map\n"]
+    lines = [f"## {number}. Dependency Map\n"]
     if not declared:
         lines.append(f"_No dependency manifest found (checked: {deps.get('source_file') or 'requirements.txt'})._\n")
     else:
@@ -76,12 +76,12 @@ def _render_dependency_map(evidence):
     return "\n".join(lines) + "\n"
 
 
-def _render_architectural_problems(evidence):
+def _render_architectural_problems(evidence, number=5):
     hotspots = evidence.get("hotspots", {})
     tests = evidence.get("tests", {})
     deployment = evidence.get("deployment", {})
     coupling = evidence.get("coupling", {})
-    lines = ["## 5. Architectural Problems\n"]
+    lines = [f"## {number}. Architectural Problems\n"]
 
     largest = hotspots.get("largest_files", [])
     if largest:
@@ -115,8 +115,81 @@ def _render_architectural_problems(evidence):
         lines.append(f"**Local module coupling:** {len(coupling)} file(s) import other local modules directly.")
     else:
         lines.append("**Local module coupling:** no local cross-module imports detected.")
+    lines.append("")
 
-    return "\n".join(lines) + "\n"
+    lines.extend(_code_health_lines(evidence))
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _code_health_lines(evidence) -> list:
+    """Deterministic checks (spec 0004). A check absent from older evidence is skipped;
+    a check that ran and found nothing says so."""
+    lines = []
+    dependencies = evidence.get("dependencies", {})
+    if "unpinned" in dependencies and dependencies.get("source_file"):
+        unpinned = dependencies["unpinned"]
+        lockfile = "a lockfile is present" if dependencies.get("has_lockfile") else "no lockfile found"
+        if unpinned:
+            lines.append(
+                f"**Unpinned dependencies:** {len(unpinned)} of {len(dependencies.get('declared', []))} "
+                f"requirement(s) are not pinned with `==` ({lockfile}) — "
+                + ", ".join(f"`{n}`" for n in unpinned)
+            )
+        else:
+            lines.append(f"**Unpinned dependencies:** none — every requirement is pinned ({lockfile}).")
+        lines.append("")
+
+    secrets = evidence.get("secrets")
+    if secrets is not None:
+        if not secrets.get("count"):
+            lines.append("**Secrets:** none found.")
+        else:
+            lines.append(f"**Secrets:** {secrets['count']} potential credential(s) found (values masked):")
+            for f in secrets.get("findings", []):
+                lines.append(f"- `{f['path']}:{f['line']}` — {f['kind']}: `{f['preview']}`")
+            for path in secrets.get("tracked_sensitive_files", []):
+                lines.append(f"- `{path}` — sensitive file tracked by git")
+            shown = len(secrets.get("findings", [])) + len(secrets.get("tracked_sensitive_files", []))
+            if secrets["count"] > shown:
+                lines.append(f"- … and {secrets['count'] - shown} more.")
+        lines.append("")
+
+    complexity = evidence.get("complexity")
+    if complexity is not None:
+        if not complexity.get("count"):
+            lines.append(f"**Complexity hotspots:** no function at or above complexity {complexity['threshold']}.")
+        else:
+            lines.append(
+                f"**Complexity hotspots:** {complexity['count']} function(s) at or above cyclomatic "
+                f"complexity {complexity['threshold']} (worst first):"
+            )
+            for f in complexity.get("functions", []):
+                lines.append(f"- `{f['path']}:{f['line']}` `{f['name']}` — complexity {f['complexity']}, {f['lines']} lines")
+        lines.append("")
+
+    untested = evidence.get("untested_modules")
+    if untested is not None:
+        if not untested.get("count"):
+            lines.append("**Untested modules:** every source module is imported by a test.")
+        else:
+            lines.append(
+                f"**Untested modules:** {untested['count']} of {untested['source_modules']} source module(s) "
+                f"are not imported by any test _(static heuristic, not coverage)_:"
+            )
+            lines.extend(f"- `{m}`" for m in untested.get("modules", []))
+        lines.append("")
+
+    unused = evidence.get("unused_imports")
+    if unused is not None:
+        if not unused.get("count"):
+            lines.append("**Unused imports:** none found.")
+        else:
+            lines.append(f"**Unused imports:** {unused['count']} found:")
+            lines.extend(f"- `{item}`" for item in unused.get("items", []))
+            if unused["count"] > len(unused.get("items", [])):
+                lines.append(f"- … and {unused['count'] - len(unused['items'])} more.")
+        lines.append("")
+    return lines
 
 
 def _render_constraints(evidence):
@@ -379,6 +452,32 @@ def _render_plan(plan: dict, section_number: int) -> str:
         for w in plan["citation_warnings"]:
             lines.append(f"- {w}")
     return "\n".join(lines) + "\n"
+
+
+def render_scan_report(evidence: dict, repo_display_name: str) -> str:
+    """Report of the deterministic findings only. Makes no LLM call and contains no
+    timestamps, so two runs on an unchanged repository are identical."""
+    languages = ", ".join(f"{name} ({d['files']} files, {d['loc']} LOC)" for name, d in evidence.get("languages", {}).items())
+    deps = evidence.get("dependencies", {})
+    summary = [
+        ("Unpinned dependencies", len(deps.get("unpinned", []))),
+        ("Potential secrets", evidence.get("secrets", {}).get("count", 0)),
+        ("Functions over the complexity threshold", evidence.get("complexity", {}).get("count", 0)),
+        ("Source modules not imported by any test", evidence.get("untested_modules", {}).get("count", 0)),
+        ("Unused imports", evidence.get("unused_imports", {}).get("count", 0)),
+        ("Deployment gaps", len(evidence.get("deployment", {}).get("gaps", []))),
+        ("Test files", evidence.get("tests", {}).get("count", 0)),
+    ]
+    sections = [
+        f"# ADLC Engineer — Deterministic Scan\n\n**Repository:** {repo_display_name}\n\n"
+        "_No LLM was used: every finding below comes from static analysis of the repository._\n",
+        "## 1. Summary\n\n" + (f"{languages}\n\n" if languages else "")
+        + "| Check | Count |\n|---|---|\n" + "\n".join(f"| {label} | {count} |" for label, count in summary) + "\n",
+        _render_dependency_map(evidence, 2),
+        _render_architectural_problems(evidence, 3),
+        _render_appendix(evidence),
+    ]
+    return "\n".join(sections)
 
 
 def _render_appendix(evidence):
