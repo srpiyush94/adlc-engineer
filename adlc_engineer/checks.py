@@ -15,6 +15,27 @@ MAX_LISTED = {"secrets": 20, "complexity": 10, "untested": 30, "unused_imports":
 
 LOCKFILES = ("poetry.lock", "Pipfile.lock", "uv.lock", "pdm.lock", "requirements.lock")
 
+# -------------------------------------------------------------- CI exit code
+
+CATEGORIES = ("secrets", "unpinned", "complexity", "untested", "unused-imports")
+
+
+def finding_counts(evidence: dict) -> dict:
+    return {
+        "secrets": evidence["secrets"]["count"],
+        "unpinned": len(evidence["dependencies"]["unpinned"]),
+        "complexity": evidence["complexity"]["count"],
+        "untested": evidence["untested_modules"]["count"],
+        "unused-imports": evidence["unused_imports"]["count"],
+    }
+
+
+def failing_categories(evidence: dict, selected) -> dict:
+    """The selected categories that have findings, as {category: count}, in CATEGORIES order."""
+    counts = finding_counts(evidence)
+    return {c: counts[c] for c in CATEGORIES if c in selected and counts[c] > 0}
+
+
 # ---------------------------------------------------------------- dependencies
 
 
